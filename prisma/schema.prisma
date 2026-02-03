@@ -1,0 +1,375 @@
+// Prisma schema for TomaFix (multi-tenant + roles + onboarding + billing + apartment core)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TemplateType {
+  APARTMENT
+  OFFICE
+  ESTATE
+}
+
+enum MemberRole {
+  OWNER_ADMIN
+  MANAGER
+  TECHNICIAN
+  RESIDENT
+  STAFF
+}
+
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  CANCELED
+}
+
+enum WorkspaceStatus {
+  PENDING_OTP
+  PENDING_PAYMENT
+  ACTIVE
+  SUSPENDED
+}
+
+enum BillingProvider {
+  PAYSTACK
+}
+
+enum PlanInterval {
+  MONTHLY
+  YEARLY
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum OtpChannel {
+  EMAIL
+  PHONE
+}
+
+enum OtpPurpose {
+  OWNER_VERIFY
+  INVITE_ACCEPT
+  LOGIN
+}
+
+enum UnitStatus {
+  VACANT
+  OCCUPIED
+  MAINTENANCE
+}
+
+enum ResidentRole {
+  TENANT
+  MANAGER
+}
+
+enum ResidentStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum RequestPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum RequestStatus {
+  PENDING
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+model Workspace {
+  id           String          @id @default(cuid())
+  name         String
+  templateType TemplateType
+  status       WorkspaceStatus @default(PENDING_OTP)
+
+  // Workspace owner (created during onboarding)
+  ownerUserId     String?
+  ownerVerifiedAt DateTime?
+  owner           User? @relation("WorkspaceOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members       WorkspaceMember[]
+  invites       Invite[]
+  otps          OtpCode[]
+  subscriptions Subscription[]
+  payments      Payment[]
+  webhookEvents WebhookEvent[]
+  auditLogs     AuditLog[]
+
+  // Apartment core
+  units     Unit[]
+  residents Resident[]
+  requests  Request[]
+
+  @@index([status])
+  @@index([ownerUserId])
+}
+
+model User {
+  id       String  @id @default(cuid())
+  email    String? @unique
+  phone    String? @unique
+  fullName String?
+
+  // Verification timestamps
+  emailVerifiedAt DateTime?
+  phoneVerifiedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships     WorkspaceMember[]
+  ownedWorkspaces Workspace[] @relation("WorkspaceOwner")
+  otps            OtpCode[]
+  auditLogs       AuditLog[]
+}
+
+model WorkspaceMember {
+  id          String     @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        MemberRole
+  isActive    Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([workspaceId])
+  @@index([userId])
+}
+
+model Invite {
+  id          String     @id @default(cuid())
+  workspaceId String
+  email       String?
+  phone       String?
+  role        MemberRole
+  tokenHash   String     @unique
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime   @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+model OtpCode {
+  id String @id @default(cuid())
+
+  // Scope OTPs to a workspace when relevant
+  workspaceId String?
+  userId      String
+
+  purpose   OtpPurpose
+  channel   OtpChannel
+  target    String // actual email/phone used
+  codeHash  String
+  expiresAt DateTime
+
+  consumedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([userId])
+  @@index([target])
+  @@index([purpose])
+  @@index([userId, purpose])
+  @@index([workspaceId, purpose])
+}
+
+model Subscription {
+  id          String           @id @default(cuid())
+  workspaceId String
+  provider    BillingProvider  @default(PAYSTACK)
+
+  // Paystack subscription identity
+  customerCode     String?
+  subscriptionCode String?
+  emailToken       String?
+
+  planId   String?
+  planCode String?
+
+  status           SubscriptionStatus @default(TRIAL)
+  currentPeriodEnd DateTime?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  plan      Plan?     @relation(fields: [planId], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId])
+  @@index([planId])
+  @@index([status])
+}
+
+model Plan {
+  id            String       @id @default(cuid())
+  name          String
+  interval      PlanInterval
+  amountPesewas Int
+  currency      String       @default("GHS")
+  isActive      Boolean      @default(true)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  subscriptions Subscription[]
+  payments      Payment[]
+
+  @@index([isActive])
+}
+
+model Payment {
+  id          String  @id @default(cuid())
+  workspaceId String
+  planId      String?
+
+  provider  BillingProvider @default(PAYSTACK)
+  reference String          @unique
+
+  amountPesewas Int
+  currency      String        @default("GHS")
+  status        PaymentStatus @default(PENDING)
+
+  // provider metadata
+  providerTxnId String?
+  channel       String?
+  paidAt        DateTime?
+
+  rawEvent  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  plan      Plan?     @relation(fields: [planId], references: [id], onDelete: SetNull)
+
+  // allow multiple payments per workspace
+  @@index([workspaceId])
+  @@index([planId])
+  @@index([status])
+}
+
+model WebhookEvent {
+  id          String          @id @default(cuid())
+  workspaceId String?
+  provider    BillingProvider @default(PAYSTACK)
+
+  eventId   String @unique
+  eventType String
+  reference String?
+
+  receivedAt DateTime @default(now())
+  payload    Json
+
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+
+  @@index([provider])
+  @@index([reference])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  workspaceId String
+  actorUserId String?
+  action      String
+  meta        Json?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor     User?     @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([actorUserId])
+}
+
+model Unit {
+  id          String     @id @default(cuid())
+  workspaceId String
+  label       String
+  block       String?
+  floor       String?
+  status      UnitStatus @default(VACANT)
+
+  workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  residents Resident[]
+  requests  Request[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([workspaceId, block, floor])
+
+  // ✅ Prevent duplicate units inside the same workspace by label
+  @@unique([workspaceId, label], name: "unit_workspace_label_unique")
+}
+
+model Resident {
+  id          String         @id @default(cuid())
+  workspaceId String
+  unitId      String?
+  fullName    String
+  phone       String?
+  email       String?
+  role        ResidentRole   @default(TENANT)
+  status      ResidentStatus @default(ACTIVE)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  unit      Unit?     @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  requests  Request[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([unitId])
+}
+
+model Request {
+  id          String          @id @default(cuid())
+  workspaceId String
+  unitId      String
+  residentId  String?
+
+  title       String
+  description String?
+  priority    RequestPriority @default(NORMAL)
+  status      RequestStatus   @default(PENDING)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  unit      Unit      @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  resident  Resident? @relation(fields: [residentId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([unitId])
+  @@index([residentId])
+}

@@ -1,0 +1,15 @@
+services:
+  db:
+    image: postgres:16
+    container_name: tomafix_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: tomafix
+    ports:
+      - "5432:5432"
+    volumes:
+      - tomafix_pgdata:/var/lib/postgresql/data
+
+volumes:
+  tomafix_pgdata:

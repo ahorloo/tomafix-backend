@@ -1,0 +1,66 @@
+{
+  "name": "tomafix-api",
+  "private": true,
+  "version": "0.0.1",
+  "description": "TomaFix API",
+  "license": "UNLICENSED",
+  "packageManager": "pnpm@10.28.1",
+  "scripts": {
+    "prebuild": "pnpm run prisma:generate",
+    "build": "pnpm exec nest build",
+    "start": "dotenv -e .env -- pnpm exec nest start",
+    "start:dev": "dotenv -e .env -- pnpm exec nest start --watch",
+    "start:node": "dotenv -e .env -- node dist/src/main.js",
+    "start:prod": "sh -c 'pnpm run prisma:migrate && pnpm run start:node'",
+    "start:prod:nomigrate": "pnpm run start:node",
+    "port:kill": "node -e \"const{execSync}=require('child_process');let p='';try{p=execSync('lsof -tiTCP:3000 -sTCP:LISTEN',{encoding:'utf8'}).trim().split('\\\\n')[0]}catch{};if(!p){console.log('No process listening on :3000');process.exit(0)};const pid=Number(p);console.log('Stopping :3000 ->',pid);try{process.kill(pid,'SIGTERM')}catch{};setTimeout(()=>{try{process.kill(pid,'SIGKILL')}catch{}},800)\"",
+    "start:prod:clean": "pnpm run port:kill && pnpm run start:prod",
+    "prisma:generate": "dotenv -e .env -- pnpm exec prisma generate --schema=prisma/schema.prisma",
+    "prisma:migrate": "dotenv -e .env -- pnpm exec prisma migrate deploy --schema=prisma/schema.prisma && pnpm run prisma:generate",
+    "logs": "sh -c 'mkdir -p .logs; touch .logs/api.log; tail -n 120 -f .logs/api.log'",
+    "logs:migrate": "sh -c 'mkdir -p .logs; touch .logs/migrate.log; tail -n 200 -f .logs/migrate.log'",
+    "start:bg": "sh -c 'mkdir -p .logs; rm -f .logs/api.pid .logs/runner.pid .logs/api.log .logs/migrate.log; pnpm run stop:bg >/dev/null 2>&1 || true; pnpm run port:kill >/dev/null 2>&1 || true; pnpm run prisma:migrate > .logs/migrate.log 2>&1 || { echo \"Migrate failed. See .logs/migrate.log\"; exit 1; }; : > .logs/api.log; nohup pnpm run start:node >> .logs/api.log 2>&1 & echo $! > .logs/runner.pid; p=\"\"; for i in $(seq 1 120); do p=$(lsof -tiTCP:3000 -sTCP:LISTEN 2>/dev/null | head -n 1); if [ -n \"$p\" ]; then break; fi; sleep 0.25; done; if [ -n \"$p\" ]; then echo \"$p\" > .logs/api.pid; else cat .logs/runner.pid > .logs/api.pid; fi; echo \"API started (bg) pid=$(cat .logs/api.pid 2>/dev/null || echo unknown)\"; echo \"Try: curl http://localhost:3000/api\"'",
+    "stop:bg": "sh -c 'mkdir -p .logs; pid=\"\"; runner=\"\"; if [ -f .logs/api.pid ]; then pid=$(cat .logs/api.pid 2>/dev/null || true); fi; if [ -f .logs/runner.pid ]; then runner=$(cat .logs/runner.pid 2>/dev/null || true); fi; for p in $pid $runner; do if [ -n \"$p\" ] && kill -0 \"$p\" 2>/dev/null; then kill -TERM \"$p\" 2>/dev/null || true; fi; done; sleep 0.8; for p in $pid $runner; do if [ -n \"$p\" ] && kill -0 \"$p\" 2>/dev/null; then kill -KILL \"$p\" 2>/dev/null || true; fi; done; rm -f .logs/api.pid .logs/runner.pid; p=$(lsof -tiTCP:3000 -sTCP:LISTEN 2>/dev/null | head -n 1); if [ -n \"$p\" ]; then echo \"Also stopping port 3000 pid=$p\"; kill -TERM \"$p\" 2>/dev/null || true; sleep 0.8; kill -KILL \"$p\" 2>/dev/null || true; fi; echo \"Stopped API\"'",
+    "status:bg": "sh -c 'pid=\"\"; runner=\"\"; if [ -f .logs/api.pid ]; then pid=$(cat .logs/api.pid 2>/dev/null || true); fi; if [ -f .logs/runner.pid ]; then runner=$(cat .logs/runner.pid 2>/dev/null || true); fi; if [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null; then echo \"API running pid=$pid\"; elif [ -n \"$pid\" ]; then echo \"API pid file exists but process not running (pid=$pid)\"; else echo \"API not running\"; fi; if [ -n \"$runner\" ] && kill -0 \"$runner\" 2>/dev/null; then echo \"Runner pid=$runner\"; fi; p=$(lsof -tiTCP:3000 -sTCP:LISTEN 2>/dev/null | head -n 1); if [ -n \"$p\" ]; then echo \"Port 3000 listening pid=$p\"; fi'"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/config": "^4.0.2",
+    "@nestjs/core": "^11.0.0",
+    "@nestjs/platform-express": "^11.0.0",
+    "@prisma/adapter-pg": "^6.0.0",
+    "@prisma/client": "^6.0.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.3",
+    "compression": "^1.8.1",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^17.2.3",
+    "dotenv-cli": "^8.0.0",
+    "helmet": "^7.1.0",
+    "pg": "^8.17.1",
+    "prisma": "^6.0.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11.0.0",
+    "@nestjs/schematics": "^11.0.0",
+    "@nestjs/testing": "^11.0.0",
+    "@types/compression": "^1.8.1",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=22.12.0",
+    "npm": ">=10.9.0",
+    "pnpm": ">=10.28.1"
+  },
+  "volta": {
+    "node": "22.22.0",
+    "npm": "10.9.4",
+    "pnpm": "10.28.1"
+  }
+}
