@@ -5,6 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { MemberRole, OtpChannel, OtpPurpose } from '@prisma/client';
+import { defaultPolicyFor, PermissionPolicy } from './permissions';
 import { createHmac, randomBytes, randomInt, scryptSync, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -170,12 +171,35 @@ export class AuthService {
     });
   }
 
+  async getWorkspacePermissionPolicy(workspaceId: string) {
+    const ws = await this.prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { id: true, templateType: true, permissionPolicy: true },
+    });
+    if (!ws) throw new BadRequestException('Workspace not found');
+
+    const policy = (ws.permissionPolicy as PermissionPolicy | null) ?? defaultPolicyFor(ws.templateType);
+    return { workspaceId: ws.id, templateType: ws.templateType, policy };
+  }
+
+  async updateWorkspacePermissionPolicy(workspaceId: string, policy: PermissionPolicy) {
+    const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { id: true } });
+    if (!ws) throw new BadRequestException('Workspace not found');
+
+    await this.prisma.workspace.update({
+      where: { id: workspaceId },
+      data: { permissionPolicy: policy as any },
+    });
+
+    return { ok: true };
+  }
+
   async assertWorkspaceAccess(userId: string, workspaceId: string, allowedRoles?: MemberRole[]) {
     const membership = await this.prisma.workspaceMember.findFirst({
       where: { userId, workspaceId, isActive: true },
       include: {
         workspace: {
-          select: { id: true, templateType: true, status: true, name: true },
+          select: { id: true, templateType: true, status: true, name: true, permissionPolicy: true },
         },
       },
     });
@@ -200,6 +224,7 @@ export class AuthService {
             templateType: true,
             status: true,
             planName: true,
+            permissionPolicy: true,
           },
         },
       },

@@ -33,7 +33,15 @@ export class WorkspaceAccessGuard implements CanActivate {
 
     const membership = await this.auth.assertWorkspaceAccess(userId, workspaceId, allowedRoles);
 
-    if (permission && !hasPermission(membership.workspace.templateType, membership.role, permission)) {
+    if (
+      permission &&
+      !hasPermission(
+        membership.workspace.templateType,
+        membership.role,
+        permission,
+        (membership.workspace as any).permissionPolicy || null,
+      )
+    ) {
       return false;
     }
 

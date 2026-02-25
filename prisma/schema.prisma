@@ -123,6 +123,7 @@ model Workspace {
   planName     String          @default("Starter")
   billingStatus BillingStatus  @default(ACTIVE)
   nextRenewal  DateTime?
+  permissionPolicy Json?
 
   // Workspace owner (created during onboarding)
   ownerUserId     String?
