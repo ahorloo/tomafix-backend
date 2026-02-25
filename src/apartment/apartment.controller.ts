@@ -60,6 +60,20 @@ export class ApartmentController {
     return this.apartment.createResident(workspaceId, dto);
   }
 
+  @Patch('residents/:residentId')
+  updateResident(
+    @Param('workspaceId') workspaceId: string,
+    @Param('residentId') residentId: string,
+    @Body() dto: Partial<CreateResidentDto>,
+  ) {
+    return this.apartment.updateResident(workspaceId, residentId, dto);
+  }
+
+  @Delete('residents/:residentId')
+  deleteResident(@Param('workspaceId') workspaceId: string, @Param('residentId') residentId: string) {
+    return this.apartment.deleteResident(workspaceId, residentId);
+  }
+
   // Requests
   @Get('requests')
   listRequests(@Param('workspaceId') workspaceId: string, @Query('status') status?: string) {

@@ -182,6 +182,50 @@ export class ApartmentService {
     });
   }
 
+  async updateResident(workspaceId: string, residentId: string, dto: Partial<CreateResidentDto>) {
+    await this.assertApartmentWorkspace(workspaceId);
+
+    const resident = await this.prisma.resident.findFirst({ where: { id: residentId, workspaceId } });
+    if (!resident) throw new NotFoundException('Resident not found');
+
+    if (dto.fullName !== undefined && !dto.fullName.trim()) {
+      throw new BadRequestException('fullName cannot be empty');
+    }
+
+    if (dto.unitId !== undefined && dto.unitId !== null && dto.unitId !== '') {
+      const unit = await this.prisma.unit.findFirst({ where: { id: dto.unitId, workspaceId } });
+      if (!unit) throw new BadRequestException('unitId does not belong to this workspace');
+    }
+
+    return this.prisma.resident.update({
+      where: { id: residentId },
+      data: {
+        fullName: dto.fullName !== undefined ? dto.fullName.trim() : undefined,
+        email: dto.email !== undefined ? (dto.email?.trim() || null) : undefined,
+        phone: dto.phone !== undefined ? (dto.phone?.trim() || null) : undefined,
+        unitId: dto.unitId !== undefined ? (dto.unitId || null) : undefined,
+        role: dto.role !== undefined ? dto.role : undefined,
+        status: dto.status !== undefined ? dto.status : undefined,
+      },
+      include: { unit: { select: { id: true, label: true, block: true, floor: true } } },
+    });
+  }
+
+  async deleteResident(workspaceId: string, residentId: string) {
+    await this.assertApartmentWorkspace(workspaceId);
+
+    const resident = await this.prisma.resident.findFirst({ where: { id: residentId, workspaceId } });
+    if (!resident) throw new NotFoundException('Resident not found');
+
+    const requestCount = await this.prisma.request.count({ where: { workspaceId, residentId } });
+    if (requestCount > 0) {
+      throw new BadRequestException('Cannot delete resident: request history exists for this resident');
+    }
+
+    await this.prisma.resident.delete({ where: { id: residentId } });
+    return { ok: true };
+  }
+
   async listRequests(workspaceId: string, status?: string) {
     await this.assertApartmentWorkspace(workspaceId);
 
