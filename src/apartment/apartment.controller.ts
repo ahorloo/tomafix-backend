@@ -7,14 +7,20 @@ import {
   Patch,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
+import { MemberRole } from '@prisma/client';
 import { ApartmentService } from './apartment.service';
 import { CreateUnitDto } from './dto/create-unit.dto';
 import { CreateResidentDto } from './dto/create-resident.dto';
 import { CreateRequestDto } from './dto/create-request.dto';
+import { AuthGuard } from '../auth/auth.guard';
+import { WorkspaceAccessGuard } from '../auth/workspace-access.guard';
+import { WorkspaceRoles } from '../auth/workspace-roles.decorator';
 
 // If main.ts sets global prefix 'api', these become:
 // /api/workspaces/:workspaceId/apartment/...
+@UseGuards(AuthGuard, WorkspaceAccessGuard)
 @Controller('workspaces/:workspaceId/apartment')
 export class ApartmentController {
   constructor(private readonly apartment: ApartmentService) {}
@@ -30,11 +36,13 @@ export class ApartmentController {
     return this.apartment.listUnits(workspaceId);
   }
 
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF)
   @Post('units')
   createUnit(@Param('workspaceId') workspaceId: string, @Body() dto: CreateUnitDto) {
     return this.apartment.createUnit(workspaceId, dto);
   }
 
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF)
   @Patch('units/:unitId')
   updateUnit(
     @Param('workspaceId') workspaceId: string,
@@ -44,6 +52,7 @@ export class ApartmentController {
     return this.apartment.updateUnit(workspaceId, unitId, dto);
   }
 
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
   @Delete('units/:unitId')
   deleteUnit(@Param('workspaceId') workspaceId: string, @Param('unitId') unitId: string) {
     return this.apartment.deleteUnit(workspaceId, unitId);
@@ -55,11 +64,13 @@ export class ApartmentController {
     return this.apartment.listResidents(workspaceId);
   }
 
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF)
   @Post('residents')
   createResident(@Param('workspaceId') workspaceId: string, @Body() dto: CreateResidentDto) {
     return this.apartment.createResident(workspaceId, dto);
   }
 
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF)
   @Patch('residents/:residentId')
   updateResident(
     @Param('workspaceId') workspaceId: string,
@@ -69,6 +80,7 @@ export class ApartmentController {
     return this.apartment.updateResident(workspaceId, residentId, dto);
   }
 
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
   @Delete('residents/:residentId')
   deleteResident(@Param('workspaceId') workspaceId: string, @Param('residentId') residentId: string) {
     return this.apartment.deleteResident(workspaceId, residentId);
@@ -80,6 +92,7 @@ export class ApartmentController {
     return this.apartment.listRequests(workspaceId, status);
   }
 
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF, MemberRole.TECHNICIAN, MemberRole.RESIDENT)
   @Post('requests')
   createRequest(@Param('workspaceId') workspaceId: string, @Body() dto: CreateRequestDto) {
     return this.apartment.createRequest(workspaceId, dto);
