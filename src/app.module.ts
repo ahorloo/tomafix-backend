@@ -5,6 +5,7 @@ import { OnboardingModule } from './onboarding/onboarding.module';
 import { BillingModule } from './billing/billing.module';
 import { ApartmentModule } from './apartment/apartment.module';
 import { AuthModule } from './auth/auth.module';
+import { OperationsModule } from './operations/operations.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -16,6 +17,7 @@ import { AppService } from './app.service';
     BillingModule,
     ApartmentModule,
     AuthModule,
+    OperationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

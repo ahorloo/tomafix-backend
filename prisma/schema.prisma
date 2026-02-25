@@ -7,6 +7,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
 enum TemplateType {
@@ -94,11 +95,34 @@ enum RequestStatus {
   CLOSED
 }
 
+enum BillingStatus {
+  PENDING_PAYMENT
+  ACTIVE
+  PAST_DUE
+  SUSPENDED
+  CANCELLED
+}
+
+enum NoticeAudience {
+  ALL
+  RESIDENTS
+  STAFF
+}
+
+enum InspectionStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+}
+
 model Workspace {
   id           String          @id @default(cuid())
   name         String
   templateType TemplateType
   status       WorkspaceStatus @default(PENDING_OTP)
+  planName     String          @default("Starter")
+  billingStatus BillingStatus  @default(ACTIVE)
+  nextRenewal  DateTime?
 
   // Workspace owner (created during onboarding)
   ownerUserId     String?
@@ -120,9 +144,14 @@ model Workspace {
   units     Unit[]
   residents Resident[]
   requests  Request[]
+  properties Property[]
+  notices   Notice[]
+  inspections Inspection[]
 
   @@index([status])
   @@index([ownerUserId])
+  @@index([planName])
+  @@index([billingStatus])
 }
 
 model User {
@@ -316,9 +345,10 @@ model Unit {
   floor       String?
   status      UnitStatus @default(VACANT)
 
-  workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  residents Resident[]
-  requests  Request[]
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  residents   Resident[]
+  requests    Request[]
+  inspections Inspection[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -372,4 +402,53 @@ model Request {
   @@index([workspaceId])
   @@index([unitId])
   @@index([residentId])
+}
+
+model Property {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@unique([workspaceId, name])
+}
+
+model Notice {
+  id          String        @id @default(cuid())
+  workspaceId String
+  title       String
+  body        String
+  audience    NoticeAudience @default(ALL)
+  seenBy      Json?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([createdAt])
+}
+
+model Inspection {
+  id          String           @id @default(cuid())
+  workspaceId String
+  unitId      String?
+  title       String
+  dueDate     DateTime
+  checklist   Json?
+  status      InspectionStatus @default(SCHEDULED)
+  result      String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  unit      Unit?     @relation(fields: [unitId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([unitId])
+  @@index([dueDate])
 }
