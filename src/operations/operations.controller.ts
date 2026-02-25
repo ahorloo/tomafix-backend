@@ -13,6 +13,7 @@ import { MemberRole, NoticeAudience } from '@prisma/client';
 import { AuthGuard } from '../auth/auth.guard';
 import { WorkspaceAccessGuard } from '../auth/workspace-access.guard';
 import { WorkspaceRoles } from '../auth/workspace-roles.decorator';
+import { WorkspacePermission } from '../auth/workspace-permission.decorator';
 import { OperationsService } from './operations.service';
 
 @UseGuards(AuthGuard, WorkspaceAccessGuard)
@@ -20,11 +21,13 @@ import { OperationsService } from './operations.service';
 export class OperationsController {
   constructor(private readonly operations: OperationsService) {}
 
+  @WorkspacePermission('notices:view')
   @Get('notices')
   listNotices(@Param('workspaceId') workspaceId: string) {
     return this.operations.listNotices(workspaceId);
   }
 
+  @WorkspacePermission('notices:manage')
   @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF)
   @Post('notices')
   createNotice(
@@ -51,11 +54,13 @@ export class OperationsController {
     return this.operations.deleteNotice(workspaceId, noticeId);
   }
 
+  @WorkspacePermission('inspections:view')
   @Get('inspections')
   listInspections(@Param('workspaceId') workspaceId: string) {
     return this.operations.listInspections(workspaceId);
   }
 
+  @WorkspacePermission('inspections:manage')
   @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF)
   @Post('inspections')
   createInspection(
@@ -65,6 +70,7 @@ export class OperationsController {
     return this.operations.createInspection(workspaceId, dto);
   }
 
+  @WorkspacePermission('inspections:manage')
   @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF)
   @Patch('inspections/:inspectionId')
   updateInspection(

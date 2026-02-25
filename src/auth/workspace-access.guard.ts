@@ -3,6 +3,8 @@ import { Reflector } from '@nestjs/core';
 import { MemberRole } from '@prisma/client';
 import { AuthService } from './auth.service';
 import { WORKSPACE_ROLES_KEY } from './workspace-roles.decorator';
+import { hasPermission, PermissionKey } from './permissions';
+import { WORKSPACE_PERMISSION_KEY } from './workspace-permission.decorator';
 
 @Injectable()
 export class WorkspaceAccessGuard implements CanActivate {
@@ -24,8 +26,18 @@ export class WorkspaceAccessGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
+    const permission = this.reflector.getAllAndOverride<PermissionKey>(WORKSPACE_PERMISSION_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
 
-    await this.auth.assertWorkspaceAccess(userId, workspaceId, allowedRoles);
+    const membership = await this.auth.assertWorkspaceAccess(userId, workspaceId, allowedRoles);
+
+    if (permission && !hasPermission(membership.workspace.templateType, membership.role, permission)) {
+      return false;
+    }
+
+    req.workspaceContext = membership;
     return true;
   }
 }

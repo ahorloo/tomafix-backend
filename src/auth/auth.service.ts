@@ -149,9 +149,35 @@ export class AuthService {
     };
   }
 
+  async listWorkspaceMembers(workspaceId: string) {
+    return this.prisma.workspaceMember.findMany({
+      where: { workspaceId },
+      include: { user: { select: { id: true, email: true, fullName: true } } },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  async updateWorkspaceMember(workspaceId: string, memberId: string, dto: { role?: MemberRole; isActive?: boolean }) {
+    const row = await this.prisma.workspaceMember.findFirst({ where: { id: memberId, workspaceId } });
+    if (!row) throw new BadRequestException('Member not found in this workspace');
+    return this.prisma.workspaceMember.update({
+      where: { id: memberId },
+      data: {
+        role: dto.role ?? undefined,
+        isActive: dto.isActive ?? undefined,
+      },
+      include: { user: { select: { id: true, email: true, fullName: true } } },
+    });
+  }
+
   async assertWorkspaceAccess(userId: string, workspaceId: string, allowedRoles?: MemberRole[]) {
     const membership = await this.prisma.workspaceMember.findFirst({
       where: { userId, workspaceId, isActive: true },
+      include: {
+        workspace: {
+          select: { id: true, templateType: true, status: true, name: true },
+        },
+      },
     });
 
     if (!membership) throw new UnauthorizedException('No access to this workspace');

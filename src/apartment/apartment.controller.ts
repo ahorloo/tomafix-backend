@@ -17,6 +17,7 @@ import { CreateRequestDto } from './dto/create-request.dto';
 import { AuthGuard } from '../auth/auth.guard';
 import { WorkspaceAccessGuard } from '../auth/workspace-access.guard';
 import { WorkspaceRoles } from '../auth/workspace-roles.decorator';
+import { WorkspacePermission } from '../auth/workspace-permission.decorator';
 
 // If main.ts sets global prefix 'api', these become:
 // /api/workspaces/:workspaceId/apartment/...
@@ -25,17 +26,20 @@ import { WorkspaceRoles } from '../auth/workspace-roles.decorator';
 export class ApartmentController {
   constructor(private readonly apartment: ApartmentService) {}
 
+  @WorkspacePermission('dashboard:view')
   @Get('dashboard')
   getDashboard(@Param('workspaceId') workspaceId: string) {
     return this.apartment.getDashboard(workspaceId);
   }
 
   // Units
+  @WorkspacePermission('units:view')
   @Get('units')
   listUnits(@Param('workspaceId') workspaceId: string) {
     return this.apartment.listUnits(workspaceId);
   }
 
+  @WorkspacePermission('units:manage')
   @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF)
   @Post('units')
   createUnit(@Param('workspaceId') workspaceId: string, @Body() dto: CreateUnitDto) {
@@ -59,11 +63,13 @@ export class ApartmentController {
   }
 
   // Residents
+  @WorkspacePermission('residents:view')
   @Get('residents')
   listResidents(@Param('workspaceId') workspaceId: string) {
     return this.apartment.listResidents(workspaceId);
   }
 
+  @WorkspacePermission('residents:manage')
   @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF)
   @Post('residents')
   createResident(@Param('workspaceId') workspaceId: string, @Body() dto: CreateResidentDto) {
@@ -87,11 +93,13 @@ export class ApartmentController {
   }
 
   // Requests
+  @WorkspacePermission('requests:view')
   @Get('requests')
   listRequests(@Param('workspaceId') workspaceId: string, @Query('status') status?: string) {
     return this.apartment.listRequests(workspaceId, status);
   }
 
+  @WorkspacePermission('requests:create')
   @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF, MemberRole.TECHNICIAN, MemberRole.RESIDENT)
   @Post('requests')
   createRequest(@Param('workspaceId') workspaceId: string, @Body() dto: CreateRequestDto) {
