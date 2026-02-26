@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Headers, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { BillingStatus } from '@prisma/client';
 import { BillingService } from './billing.service';
 import { BillingDomainService } from './service';
 import { AuthGuard } from '../auth/auth.guard';
@@ -66,6 +67,22 @@ export class BillingController {
   @Post('workspaces/:workspaceId/retry-payment')
   retryPayment(@Param('workspaceId') workspaceId: string) {
     return this.billing.retryLatestPayment(workspaceId);
+  }
+
+  @UseGuards(AuthGuard, WorkspaceAccessGuard)
+  @WorkspacePermission('users:manage')
+  @Patch('workspaces/:workspaceId/billing-status')
+  setBillingStatus(@Param('workspaceId') workspaceId: string, @Body() body: { status: BillingStatus }) {
+    return this.billing.setBillingStatus(workspaceId, body.status);
+  }
+
+  @Post('dunning/run')
+  runDunning(@Headers('x-billing-admin-key') adminKey?: string) {
+    const expected = process.env.BILLING_ADMIN_KEY || '';
+    if (!expected || adminKey !== expected) {
+      return { ok: false, message: 'Unauthorized dunning trigger' };
+    }
+    return this.billing.runDunningSweep();
   }
 
   @Get('health')

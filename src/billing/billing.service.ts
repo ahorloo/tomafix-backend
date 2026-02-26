@@ -14,6 +14,20 @@ import { PaystackService } from './paystack.service';
 export class BillingService {
   private readonly logger = new Logger(BillingService.name);
 
+  private assertBillingTransition(from: BillingStatus, to: BillingStatus) {
+    const allowed: Record<BillingStatus, BillingStatus[]> = {
+      ACTIVE: [BillingStatus.PAST_DUE, BillingStatus.CANCELLED],
+      PAST_DUE: [BillingStatus.ACTIVE, BillingStatus.SUSPENDED, BillingStatus.CANCELLED],
+      SUSPENDED: [BillingStatus.ACTIVE, BillingStatus.CANCELLED],
+      CANCELLED: [BillingStatus.ACTIVE],
+      PENDING_PAYMENT: [BillingStatus.ACTIVE, BillingStatus.CANCELLED],
+    } as any;
+
+    if (!allowed[from]?.includes(to)) {
+      throw new BadRequestException(`Invalid billing transition: ${from} -> ${to}`);
+    }
+  }
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly paystack: PaystackService,
@@ -275,6 +289,10 @@ export class BillingService {
           ? new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000)
           : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
+      const currentWs = await tx.workspace.findUnique({ where: { id: payment.workspaceId } });
+      if (!currentWs) throw new NotFoundException('Workspace not found while finalizing payment');
+      this.assertBillingTransition(currentWs.billingStatus as BillingStatus, BillingStatus.ACTIVE);
+
       await tx.workspace.update({
         where: { id: payment.workspaceId },
         data: {
@@ -434,6 +452,8 @@ export class BillingService {
     const plan = await this.prisma.plan.findUnique({ where: { id: planId } });
     if (!plan || !plan.isActive) throw new BadRequestException('Plan not found or inactive');
 
+    this.assertBillingTransition(ws.billingStatus as BillingStatus, BillingStatus.ACTIVE);
+
     await this.prisma.workspace.update({
       where: { id: workspaceId },
       data: {
@@ -485,6 +505,7 @@ export class BillingService {
     }
 
     await this.prisma.payment.update({ where: { id: latest.id }, data: { status: PaymentStatus.PENDING } });
+    this.assertBillingTransition(ws.billingStatus as BillingStatus, BillingStatus.PAST_DUE);
     await this.prisma.workspace.update({ where: { id: workspaceId }, data: { billingStatus: BillingStatus.PAST_DUE } });
 
     await this.prisma.auditLog.create({
@@ -496,6 +517,79 @@ export class BillingService {
     });
 
     return { ok: true, reference: latest.reference, status: PaymentStatus.PENDING };
+  }
+
+  async setBillingStatus(workspaceId: string, to: BillingStatus) {
+    const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
+    if (!ws) throw new NotFoundException('Workspace not found');
+
+    this.assertBillingTransition(ws.billingStatus as BillingStatus, to);
+
+    const workspaceStatus =
+      to === BillingStatus.SUSPENDED || to === BillingStatus.CANCELLED
+        ? WorkspaceStatus.SUSPENDED
+        : WorkspaceStatus.ACTIVE;
+
+    await this.prisma.workspace.update({
+      where: { id: workspaceId },
+      data: {
+        billingStatus: to,
+        status: workspaceStatus,
+      },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        workspaceId,
+        action: 'billing.status_changed',
+        meta: { from: ws.billingStatus, to },
+      },
+    });
+
+    return { ok: true, billingStatus: to, workspaceStatus };
+  }
+
+  async runDunningSweep() {
+    const now = new Date();
+    const overdueCutoff = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
+    const suspendCutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const pendingPayments = await this.prisma.payment.findMany({
+      where: { status: PaymentStatus.PENDING },
+      orderBy: { createdAt: 'asc' },
+      take: 500,
+    });
+
+    let pastDue = 0;
+    let suspended = 0;
+
+    for (const p of pendingPayments) {
+      const ws = await this.prisma.workspace.findUnique({ where: { id: p.workspaceId } });
+      if (!ws) continue;
+
+      if (p.createdAt <= suspendCutoff && ws.billingStatus !== BillingStatus.SUSPENDED) {
+        try {
+          this.assertBillingTransition(ws.billingStatus as BillingStatus, BillingStatus.SUSPENDED);
+          await this.setBillingStatus(ws.id, BillingStatus.SUSPENDED);
+          suspended += 1;
+        } catch {
+          // skip invalid transitions
+        }
+        continue;
+      }
+
+      if (p.createdAt <= overdueCutoff && ws.billingStatus === BillingStatus.ACTIVE) {
+        try {
+          this.assertBillingTransition(ws.billingStatus as BillingStatus, BillingStatus.PAST_DUE);
+          await this.setBillingStatus(ws.id, BillingStatus.PAST_DUE);
+          pastDue += 1;
+        } catch {
+          // skip invalid transitions
+        }
+      }
+    }
+
+    return { ok: true, scanned: pendingPayments.length, movedToPastDue: pastDue, movedToSuspended: suspended };
   }
 }
 
