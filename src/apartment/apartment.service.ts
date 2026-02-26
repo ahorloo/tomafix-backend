@@ -165,6 +165,24 @@ export class ApartmentService {
     });
   }
 
+  private async syncUnitOccupancy(workspaceId: string, unitId: string) {
+    const [unit, activeResidents] = await Promise.all([
+      this.prisma.unit.findFirst({ where: { id: unitId, workspaceId } }),
+      this.prisma.resident.count({ where: { workspaceId, unitId, status: ResidentStatus.ACTIVE } }),
+    ]);
+
+    if (!unit) return;
+
+    if (activeResidents > 0 && unit.status !== UnitStatus.OCCUPIED) {
+      await this.prisma.unit.update({ where: { id: unitId }, data: { status: UnitStatus.OCCUPIED } });
+      return;
+    }
+
+    if (activeResidents === 0 && unit.status === UnitStatus.OCCUPIED) {
+      await this.prisma.unit.update({ where: { id: unitId }, data: { status: UnitStatus.VACANT } });
+    }
+  }
+
   async createResident(workspaceId: string, dto: CreateResidentDto) {
     await this.assertApartmentWorkspace(workspaceId);
 
@@ -197,6 +215,10 @@ export class ApartmentService {
       inviteUrl = invite?.inviteUrl || null;
     }
 
+    if (resident.unitId) {
+      await this.syncUnitOccupancy(workspaceId, resident.unitId);
+    }
+
     return { ...resident, inviteSent, inviteUrl };
   }
 
@@ -215,7 +237,7 @@ export class ApartmentService {
       if (!unit) throw new BadRequestException('unitId does not belong to this workspace');
     }
 
-    return this.prisma.resident.update({
+    const updated = await this.prisma.resident.update({
       where: { id: residentId },
       data: {
         fullName: dto.fullName !== undefined ? dto.fullName.trim() : undefined,
@@ -227,6 +249,11 @@ export class ApartmentService {
       },
       include: { unit: { select: { id: true, label: true, block: true, floor: true } } },
     });
+
+    if (resident.unitId) await this.syncUnitOccupancy(workspaceId, resident.unitId);
+    if (updated.unitId && updated.unitId !== resident.unitId) await this.syncUnitOccupancy(workspaceId, updated.unitId);
+
+    return updated;
   }
 
   async deleteResident(workspaceId: string, residentId: string) {
@@ -241,6 +268,7 @@ export class ApartmentService {
     }
 
     await this.prisma.resident.delete({ where: { id: residentId } });
+    if (resident.unitId) await this.syncUnitOccupancy(workspaceId, resident.unitId);
     return { ok: true };
   }
 
