@@ -13,6 +13,17 @@ type VerifyOtpDto = {
   code: string;
 };
 
+type CreateInviteDto = {
+  workspaceId: string;
+  email: string;
+  residentName?: string;
+};
+
+type AcceptInviteDto = {
+  token: string;
+  fullName?: string;
+};
+
 @Controller('onboarding')
 export class OnboardingController {
   constructor(private readonly onboarding: OnboardingService) {}
@@ -32,5 +43,15 @@ export class OnboardingController {
   @Post('otp/verify')
   verifyOtp(@Body() dto: VerifyOtpDto) {
     return this.onboarding.verifyOtpEmail(dto);
+  }
+
+  @Post('invites/create')
+  createInvite(@Body() dto: CreateInviteDto) {
+    return this.onboarding.createTenantInvite(dto);
+  }
+
+  @Post('invites/accept')
+  acceptInvite(@Body() dto: AcceptInviteDto) {
+    return this.onboarding.acceptTenantInvite(dto);
   }
 }

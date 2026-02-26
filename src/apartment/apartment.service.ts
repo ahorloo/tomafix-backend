@@ -9,13 +9,17 @@ import {
   UnitStatus,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { OnboardingService } from '../onboarding/onboarding.service';
 import { CreateUnitDto } from './dto/create-unit.dto';
 import { CreateResidentDto } from './dto/create-resident.dto';
 import { CreateRequestDto } from './dto/create-request.dto';
 
 @Injectable()
 export class ApartmentService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly onboarding: OnboardingService,
+  ) {}
 
   private async assertApartmentWorkspace(workspaceId: string) {
     const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
@@ -169,7 +173,7 @@ export class ApartmentService {
       if (!unit) throw new BadRequestException('unitId does not belong to this workspace');
     }
 
-    return this.prisma.resident.create({
+    const resident = await this.prisma.resident.create({
       data: {
         workspaceId,
         unitId: dto.unitId ?? null,
@@ -180,6 +184,20 @@ export class ApartmentService {
         status: dto.status ?? ResidentStatus.ACTIVE,
       },
     });
+
+    let inviteSent = false;
+    let inviteUrl: string | null = null;
+    if (resident.email) {
+      const invite = await this.onboarding.createTenantInvite({
+        workspaceId,
+        email: resident.email,
+        residentName: resident.fullName,
+      });
+      inviteSent = true;
+      inviteUrl = invite?.inviteUrl || null;
+    }
+
+    return { ...resident, inviteSent, inviteUrl };
   }
 
   async updateResident(workspaceId: string, residentId: string, dto: Partial<CreateResidentDto>) {

@@ -128,6 +128,31 @@ export class AuthService {
     };
   }
 
+  async createSessionForUser(userId: string, preferredWorkspaceId?: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException('User not found');
+
+    const memberships = await this.getMembershipsForUser(userId);
+    const defaultWorkspaceId =
+      preferredWorkspaceId && memberships.some((m) => m.workspaceId === preferredWorkspaceId)
+        ? preferredWorkspaceId
+        : memberships[0]?.workspaceId ?? null;
+
+    const token = this.signToken({ uid: user.id, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 });
+
+    return {
+      ok: true,
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.fullName,
+      },
+      memberships,
+      defaultWorkspaceId,
+    };
+  }
+
   verifyBearerToken(authHeader?: string) {
     const raw = String(authHeader || '');
     if (!raw.toLowerCase().startsWith('bearer ')) throw new UnauthorizedException('Missing bearer token');
