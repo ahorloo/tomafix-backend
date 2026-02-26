@@ -85,6 +85,20 @@ export class BillingController {
     return this.billing.runDunningSweep();
   }
 
+  @UseGuards(AuthGuard, WorkspaceAccessGuard)
+  @WorkspacePermission('users:manage')
+  @Get('workspaces/:workspaceId/webhooks/failed')
+  failedWebhooks(@Param('workspaceId') workspaceId: string) {
+    return this.billing.listFailedWebhookEvents(workspaceId);
+  }
+
+  @UseGuards(AuthGuard, WorkspaceAccessGuard)
+  @WorkspacePermission('users:manage')
+  @Post('workspaces/:workspaceId/webhooks/replay/:eventId')
+  replayWebhook(@Param('eventId') eventId: string) {
+    return this.billing.replayFailedWebhook(eventId);
+  }
+
   @Get('health')
   health() {
     return this.domainBilling.health();

@@ -374,16 +374,23 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
     const eventId = `${eventType}:${reference || 'noref'}:${txnId || 'notxn'}`;
 
     // store webhook event (dedupe via unique eventId)
-    const forensicPayload = {
+    const forensicPayload: any = {
       event: payload,
       meta: {
         signatureVerified: true,
         receivedAt: new Date().toISOString(),
         providerTxnId: txnId || null,
+        processed: false,
+        attempts: 0,
+        lastError: null,
       },
     };
 
-    await this.prisma.webhookEvent.upsert({
+    const existing = await this.prisma.webhookEvent.findUnique({ where: { eventId } });
+    const prevAttempts = Number((existing as any)?.payload?.meta?.attempts || 0);
+    forensicPayload.meta.attempts = prevAttempts + 1;
+
+    const stored = await this.prisma.webhookEvent.upsert({
       where: { eventId },
       update: { payload: forensicPayload },
       create: {
@@ -395,21 +402,50 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       },
     });
 
-    // only handle successful charges for now
-    if (eventType === 'charge.success' && reference) {
-      const paidAt = data?.paid_at ? new Date(data.paid_at) : new Date();
+    try {
+      // only handle successful charges for now
+      if (eventType === 'charge.success' && reference) {
+        const paidAt = data?.paid_at ? new Date(data.paid_at) : new Date();
 
-      await this.finalizeSuccessfulPayment({
-        reference,
-        txnId: txnId || null,
-        paidAt,
-        rawEvent: payload,
+        await this.finalizeSuccessfulPayment({
+          reference,
+          txnId: txnId || null,
+          paidAt,
+          rawEvent: payload,
+        });
+      }
+
+      await this.prisma.webhookEvent.update({
+        where: { id: stored.id },
+        data: {
+          payload: {
+            ...(stored.payload as any),
+            meta: {
+              ...((stored.payload as any)?.meta || {}),
+              processed: true,
+              lastError: null,
+            },
+          },
+        },
       });
 
       return { ok: true, processed: true };
+    } catch (e: any) {
+      await this.prisma.webhookEvent.update({
+        where: { id: stored.id },
+        data: {
+          payload: {
+            ...(stored.payload as any),
+            meta: {
+              ...((stored.payload as any)?.meta || {}),
+              processed: false,
+              lastError: e?.message || 'unknown webhook processing error',
+            },
+          },
+        },
+      });
+      throw e;
     }
-
-    return { ok: true, received: true };
   }
 
   async workspaceBillingStatus(workspaceId: string) {
@@ -588,6 +624,25 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       },
     });
 
+    if (to === BillingStatus.PAST_DUE || to === BillingStatus.SUSPENDED) {
+      try {
+        await this.prisma.notice.create({
+          data: {
+            workspaceId,
+            title: to === BillingStatus.PAST_DUE ? 'Billing past due' : 'Workspace suspended for billing',
+            body:
+              to === BillingStatus.PAST_DUE
+                ? 'Payment is overdue. Retry payment to avoid suspension.'
+                : 'Workspace access is limited due to unpaid billing. Reactivate after payment.',
+            audience: 'STAFF' as any,
+            seenBy: [],
+          },
+        });
+      } catch {
+        // notice module may not be enabled for all templates
+      }
+    }
+
     return { ok: true, billingStatus: to, workspaceStatus };
   }
 
@@ -632,6 +687,65 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
     }
 
     return { ok: true, scanned: pendingPayments.length, movedToPastDue: pastDue, movedToSuspended: suspended };
+  }
+
+  async listFailedWebhookEvents(workspaceId?: string) {
+    let refs: string[] | undefined;
+    if (workspaceId) {
+      const payments = await this.prisma.payment.findMany({ where: { workspaceId }, select: { reference: true } });
+      refs = payments.map((p) => p.reference);
+      if (!refs.length) return [];
+    }
+
+    const events = await this.prisma.webhookEvent.findMany({
+      where: refs
+        ? {
+            reference: { in: refs },
+          }
+        : undefined,
+      orderBy: { receivedAt: 'desc' },
+      take: 100,
+    });
+
+    return events.filter((e: any) => (e?.payload?.meta?.processed === false));
+  }
+
+  async replayFailedWebhook(eventId: string) {
+    const evt = await this.prisma.webhookEvent.findUnique({ where: { eventId } });
+    if (!evt) throw new NotFoundException('Webhook event not found');
+
+    const payload: any = (evt.payload as any)?.event || evt.payload;
+    const eventType = payload?.event;
+    const data = payload?.data || {};
+
+    if (eventType === 'charge.success' && data?.reference) {
+      const paidAt = data?.paid_at ? new Date(data.paid_at) : new Date();
+      await this.finalizeSuccessfulPayment({
+        reference: data.reference,
+        txnId: data?.id ? String(data.id) : null,
+        paidAt,
+        rawEvent: payload,
+      });
+
+      await this.prisma.webhookEvent.update({
+        where: { eventId },
+        data: {
+          payload: {
+            ...(evt.payload as any),
+            meta: {
+              ...((evt.payload as any)?.meta || {}),
+              processed: true,
+              replayedAt: new Date().toISOString(),
+              lastError: null,
+            },
+          },
+        },
+      });
+
+      return { ok: true, replayed: true, eventId };
+    }
+
+    throw new BadRequestException('Unsupported webhook event type for replay');
   }
 }
 
