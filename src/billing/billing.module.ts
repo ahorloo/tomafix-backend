@@ -11,6 +11,6 @@ import { WorkspaceAccessGuard } from '../auth/workspace-access.guard';
   imports: [PrismaModule, AuthModule],
   controllers: [BillingController],
   providers: [BillingService, PaystackService, AuthGuard, WorkspaceAccessGuard],
-  exports: [BillingService, PaystackService, BillingDomainService],
+  exports: [BillingService, PaystackService],
 })
 export class BillingModule {}

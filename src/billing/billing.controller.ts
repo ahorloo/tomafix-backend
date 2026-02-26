@@ -97,6 +97,6 @@ export class BillingController {
 
   @Get('health')
   health() {
-    return this.domainBilling.health();
+    return this.billing.health();
   }
 }
