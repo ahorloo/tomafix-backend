@@ -1,17 +1,13 @@
 import { Body, Controller, Get, Headers, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { BillingStatus } from '@prisma/client';
 import { BillingService } from './billing.service';
-import { BillingDomainService } from './service';
 import { AuthGuard } from '../auth/auth.guard';
 import { WorkspaceAccessGuard } from '../auth/workspace-access.guard';
 import { WorkspacePermission } from '../auth/workspace-permission.decorator';
 
 @Controller('billing')
 export class BillingController {
-  constructor(
-    private readonly billing: BillingService,
-    private readonly domainBilling: BillingDomainService,
-  ) {}
+  constructor(private readonly billing: BillingService) {}
 
   @Get('plans')
   listPlans() {
@@ -45,7 +41,7 @@ export class BillingController {
   @WorkspacePermission('dashboard:view')
   @Get('workspaces/:workspaceId/status')
   status(@Param('workspaceId') workspaceId: string) {
-    return this.domainBilling.getWorkspaceEntitlements(workspaceId);
+    return this.billing.workspaceBillingStatus(workspaceId);
   }
 
   @UseGuards(AuthGuard, WorkspaceAccessGuard)
