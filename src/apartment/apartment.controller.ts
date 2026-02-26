@@ -106,4 +106,15 @@ export class ApartmentController {
   createRequest(@Param('workspaceId') workspaceId: string, @Body() dto: CreateRequestDto) {
     return this.apartment.createRequest(workspaceId, dto);
   }
+
+  @WorkspacePermission('requests:create')
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF, MemberRole.TECHNICIAN)
+  @Patch('requests/:requestId')
+  updateRequest(
+    @Param('workspaceId') workspaceId: string,
+    @Param('requestId') requestId: string,
+    @Body() dto: { status?: 'PENDING' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED'; priority?: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT' },
+  ) {
+    return this.apartment.updateRequest(workspaceId, requestId, dto as any);
+  }
 }

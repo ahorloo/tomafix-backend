@@ -315,4 +315,27 @@ export class ApartmentService {
       },
     });
   }
+
+  async updateRequest(
+    workspaceId: string,
+    requestId: string,
+    dto: { status?: RequestStatus; priority?: RequestPriority },
+  ) {
+    await this.assertApartmentWorkspace(workspaceId);
+
+    const req = await this.prisma.request.findFirst({ where: { id: requestId, workspaceId } });
+    if (!req) throw new NotFoundException('Request not found');
+
+    return this.prisma.request.update({
+      where: { id: requestId },
+      data: {
+        status: dto.status ?? undefined,
+        priority: dto.priority ?? undefined,
+      },
+      include: {
+        unit: { select: { id: true, label: true, block: true, floor: true } },
+        resident: { select: { id: true, fullName: true } },
+      },
+    });
+  }
 }
