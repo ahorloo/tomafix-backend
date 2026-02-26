@@ -1,9 +1,16 @@
-import { Body, Controller, Get, Headers, Param, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { BillingService } from './billing.service';
+import { BillingDomainService } from './service';
+import { AuthGuard } from '../auth/auth.guard';
+import { WorkspaceAccessGuard } from '../auth/workspace-access.guard';
+import { WorkspacePermission } from '../auth/workspace-permission.decorator';
 
 @Controller('billing')
 export class BillingController {
-  constructor(private readonly billing: BillingService) {}
+  constructor(
+    private readonly billing: BillingService,
+    private readonly domainBilling: BillingDomainService,
+  ) {}
 
   @Get('plans')
   listPlans() {
@@ -33,8 +40,36 @@ export class BillingController {
     return this.billing.handlePaystackWebhook(req.rawBody, headers, body);
   }
 
+  @UseGuards(AuthGuard, WorkspaceAccessGuard)
+  @WorkspacePermission('dashboard:view')
   @Get('workspaces/:workspaceId/status')
   status(@Param('workspaceId') workspaceId: string) {
-    return this.billing.workspaceBillingStatus(workspaceId);
+    return this.domainBilling.getWorkspaceEntitlements(workspaceId);
+  }
+
+  @UseGuards(AuthGuard, WorkspaceAccessGuard)
+  @WorkspacePermission('dashboard:view')
+  @Get('workspaces/:workspaceId/overview')
+  overview(@Param('workspaceId') workspaceId: string) {
+    return this.billing.billingOverview(workspaceId);
+  }
+
+  @UseGuards(AuthGuard, WorkspaceAccessGuard)
+  @WorkspacePermission('users:manage')
+  @Patch('workspaces/:workspaceId/change-plan')
+  changePlan(@Param('workspaceId') workspaceId: string, @Body() body: { planId: string }) {
+    return this.billing.changeWorkspacePlan(workspaceId, body.planId);
+  }
+
+  @UseGuards(AuthGuard, WorkspaceAccessGuard)
+  @WorkspacePermission('users:manage')
+  @Post('workspaces/:workspaceId/retry-payment')
+  retryPayment(@Param('workspaceId') workspaceId: string) {
+    return this.billing.retryLatestPayment(workspaceId);
+  }
+
+  @Get('health')
+  health() {
+    return this.domainBilling.health();
   }
 }

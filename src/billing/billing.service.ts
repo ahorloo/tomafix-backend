@@ -1,6 +1,7 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadGatewayException, BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import {
   BillingProvider,
+  BillingStatus,
   PaymentStatus,
   SubscriptionStatus,
   WorkspaceStatus,
@@ -11,16 +12,62 @@ import { PaystackService } from './paystack.service';
 
 @Injectable()
 export class BillingService {
+  private readonly logger = new Logger(BillingService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly paystack: PaystackService,
   ) {}
 
   async listPlans() {
-    return this.prisma.plan.findMany({
+    const plans = await this.prisma.plan.findMany({
       where: { isActive: true },
       orderBy: [{ interval: 'asc' }, { amountPesewas: 'asc' }],
     });
+
+    // Enrich with user-facing copy (kept server-side so frontend stays simple)
+    const copy: Record<
+      string,
+      { summary: string; priceText: string; bullets: string[] }
+    > = {
+      Starter: {
+        summary: 'For small apartment buildings',
+        priceText: 'GH₵ 79 / month',
+        bullets: [
+          '1 property',
+          'Up to 20 units',
+          'Requests + residents management',
+          'No Blocks (single-building setup)',
+        ],
+      },
+      Growth: {
+        summary: 'For growing apartments & small managers',
+        priceText: 'GH₵ 149 / month',
+        bullets: [
+          'Up to 3 properties',
+          'Up to 120 total units',
+          'Blocks enabled (Block A / B / C)',
+          'Staff assignment + basic reports',
+        ],
+      },
+      'Toma Prime': {
+        summary: 'For large apartments & premium teams',
+        priceText: 'GH₵ 299 / month',
+        bullets: [
+          'Up to 5 properties',
+          'Up to 250 total units',
+          'Blocks enabled',
+          'Advanced reports + exports',
+          'Priority support',
+          'Early access to new features',
+        ],
+      },
+    };
+
+    return plans.map((p) => ({
+      ...p,
+      ui: copy[p.name] ?? null,
+    }));
   }
 
   async initPaystackPayment(dto: { workspaceId: string; planId: string }) {
@@ -42,6 +89,9 @@ export class BillingService {
     if (!plan || !plan.isActive) throw new BadRequestException('Plan not found or inactive');
 
     const reference = `tf_${randomUUID()}`;
+    const overrideCurrency = process.env.PAYSTACK_CURRENCY_OVERRIDE?.trim().toUpperCase();
+    const chargeCurrency = overrideCurrency || plan.currency;
+    const omitCurrency = process.env.PAYSTACK_OMIT_CURRENCY === 'true';
 
     // create payment row first
     await this.prisma.payment.create({
@@ -51,25 +101,34 @@ export class BillingService {
         provider: BillingProvider.PAYSTACK,
         reference,
         amountPesewas: plan.amountPesewas,
-        currency: plan.currency,
+        currency: chargeCurrency,
         status: PaymentStatus.PENDING,
       },
     });
 
     const callbackUrl = process.env.PAYSTACK_CALLBACK_URL;
 
-    const data = await this.paystack.initializeTransaction({
-      email: workspace.owner.email,
-      amount: plan.amountPesewas,
-      currency: plan.currency,
-      reference,
-      callback_url: callbackUrl,
-      metadata: {
-        workspaceId: workspace.id,
-        planId: plan.id,
-        templateType: workspace.templateType,
-      },
-    });
+    let data: Awaited<ReturnType<PaystackService['initializeTransaction']>>;
+    try {
+      data = await this.paystack.initializeTransaction({
+        email: workspace.owner.email,
+        amount: plan.amountPesewas,
+        currency: omitCurrency ? undefined : chargeCurrency,
+        reference,
+        callback_url: callbackUrl,
+        metadata: {
+          workspaceId: workspace.id,
+          planId: plan.id,
+          templateType: workspace.templateType,
+        },
+      });
+    } catch (error: any) {
+      // Keep provider failure details in server logs and return a clean API error.
+      this.logger.error(
+        `Paystack init failed for workspace=${workspace.id} reference=${reference}: ${error?.message || error}`,
+      );
+      throw new BadGatewayException(this.extractPaystackMessage(error));
+    }
 
     return {
       ok: true,
@@ -77,6 +136,23 @@ export class BillingService {
       authorizationUrl: data.authorization_url,
       accessCode: data.access_code,
     };
+  }
+
+  private extractPaystackMessage(error: any): string {
+    const fallback = 'Unable to initialize Paystack payment right now';
+    const raw = String(error?.message || '');
+
+    if (!raw) return fallback;
+
+    if (!raw.includes('Paystack init failed:')) return raw;
+
+    const payload = raw.replace('Paystack init failed:', '').trim();
+    try {
+      const parsed = JSON.parse(payload) as { message?: string };
+      return parsed.message || fallback;
+    } catch {
+      return fallback;
+    }
   }
 
   /**
@@ -189,11 +265,6 @@ export class BillingService {
         },
       });
 
-      await tx.workspace.update({
-        where: { id: payment.workspaceId },
-        data: { status: WorkspaceStatus.ACTIVE },
-      });
-
       const plan = payment.planId
         ? await tx.plan.findUnique({ where: { id: payment.planId } })
         : null;
@@ -203,6 +274,16 @@ export class BillingService {
         plan?.interval === 'YEARLY'
           ? new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000)
           : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+      await tx.workspace.update({
+        where: { id: payment.workspaceId },
+        data: {
+          status: WorkspaceStatus.ACTIVE,
+          planName: plan?.name || 'Starter',
+          billingStatus: BillingStatus.ACTIVE,
+          nextRenewal: end,
+        },
+      });
 
       const existingSub = await tx.subscription.findFirst({
         where: { workspaceId: payment.workspaceId },
@@ -301,4 +382,120 @@ export class BillingService {
       latestSubscription: ws.subscriptions[0] || null,
     };
   }
+
+  async billingOverview(workspaceId: string) {
+    const ws = await this.prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      include: {
+        payments: { orderBy: { createdAt: 'desc' }, take: 12 },
+        subscriptions: { orderBy: { createdAt: 'desc' }, take: 1, include: { plan: true } },
+      },
+    });
+
+    if (!ws) throw new NotFoundException('Workspace not found');
+
+    const webhookEvents = await this.prisma.webhookEvent.findMany({
+      where: { reference: { in: ws.payments.map((p) => p.reference) } },
+      orderBy: { receivedAt: 'desc' },
+      take: 20,
+    });
+
+    const timeline = [
+      ...ws.payments.map((p) => ({
+        at: p.createdAt,
+        type: 'PAYMENT',
+        label: `Payment ${p.status}`,
+        ref: p.reference,
+      })),
+      ...webhookEvents.map((e) => ({
+        at: e.receivedAt,
+        type: 'WEBHOOK',
+        label: e.eventType,
+        ref: e.reference,
+      })),
+    ].sort((a, b) => +new Date(b.at) - +new Date(a.at));
+
+    return {
+      workspaceId: ws.id,
+      workspaceStatus: ws.status,
+      billingStatus: ws.billingStatus,
+      nextRenewal: ws.nextRenewal,
+      planName: ws.planName,
+      latestSubscription: ws.subscriptions[0] || null,
+      payments: ws.payments,
+      timeline,
+    };
+  }
+
+  async changeWorkspacePlan(workspaceId: string, planId: string) {
+    const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
+    if (!ws) throw new NotFoundException('Workspace not found');
+
+    const plan = await this.prisma.plan.findUnique({ where: { id: planId } });
+    if (!plan || !plan.isActive) throw new BadRequestException('Plan not found or inactive');
+
+    await this.prisma.workspace.update({
+      where: { id: workspaceId },
+      data: {
+        planName: plan.name,
+        billingStatus: BillingStatus.ACTIVE,
+      },
+    });
+
+    const currentSub = await this.prisma.subscription.findFirst({ where: { workspaceId } });
+    const periodEnd = new Date(Date.now() + (plan.interval === 'YEARLY' ? 365 : 30) * 24 * 60 * 60 * 1000);
+
+    if (currentSub) {
+      await this.prisma.subscription.update({
+        where: { id: currentSub.id },
+        data: { planId: plan.id, status: SubscriptionStatus.ACTIVE, currentPeriodEnd: periodEnd },
+      });
+    } else {
+      await this.prisma.subscription.create({
+        data: {
+          workspaceId,
+          planId: plan.id,
+          provider: BillingProvider.PAYSTACK,
+          status: SubscriptionStatus.ACTIVE,
+          currentPeriodEnd: periodEnd,
+        },
+      });
+    }
+
+    await this.prisma.auditLog.create({
+      data: {
+        workspaceId,
+        action: 'billing.plan_changed',
+        meta: { planId: plan.id, planName: plan.name },
+      },
+    });
+
+    return { ok: true, workspaceId, planName: plan.name };
+  }
+
+  async retryLatestPayment(workspaceId: string) {
+    const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
+    if (!ws) throw new NotFoundException('Workspace not found');
+
+    const latest = await this.prisma.payment.findFirst({ where: { workspaceId }, orderBy: { createdAt: 'desc' } });
+    if (!latest) throw new BadRequestException('No payment found to retry');
+
+    if (latest.status === PaymentStatus.PAID) {
+      return { ok: true, message: 'Latest payment already paid', reference: latest.reference };
+    }
+
+    await this.prisma.payment.update({ where: { id: latest.id }, data: { status: PaymentStatus.PENDING } });
+    await this.prisma.workspace.update({ where: { id: workspaceId }, data: { billingStatus: BillingStatus.PAST_DUE } });
+
+    await this.prisma.auditLog.create({
+      data: {
+        workspaceId,
+        action: 'billing.retry_requested',
+        meta: { reference: latest.reference },
+      },
+    });
+
+    return { ok: true, reference: latest.reference, status: PaymentStatus.PENDING };
+  }
 }
+
