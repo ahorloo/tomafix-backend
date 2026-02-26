@@ -94,13 +94,14 @@ export class ApartmentController {
 
   // Requests
   @WorkspacePermission('requests:view')
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF, MemberRole.TECHNICIAN)
   @Get('requests')
   listRequests(@Param('workspaceId') workspaceId: string, @Query('status') status?: string) {
     return this.apartment.listRequests(workspaceId, status);
   }
 
   @WorkspacePermission('requests:create')
-  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF, MemberRole.TECHNICIAN, MemberRole.RESIDENT)
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF, MemberRole.TECHNICIAN)
   @Post('requests')
   createRequest(@Param('workspaceId') workspaceId: string, @Body() dto: CreateRequestDto) {
     return this.apartment.createRequest(workspaceId, dto);

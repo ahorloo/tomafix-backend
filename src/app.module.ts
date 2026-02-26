@@ -7,6 +7,7 @@ import { ApartmentModule } from './apartment/apartment.module';
 import { AuthModule } from './auth/auth.module';
 import { OperationsModule } from './operations/operations.module';
 import { ReportsModule } from './reports/reports.module';
+import { TenantModule } from './tenant/tenant.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -20,6 +21,7 @@ import { AppService } from './app.service';
     AuthModule,
     OperationsModule,
     ReportsModule,
+    TenantModule,
   ],
   controllers: [AppController],
   providers: [AppService],
