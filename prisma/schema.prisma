@@ -148,6 +148,7 @@ model Workspace {
   properties Property[]
   notices   Notice[]
   inspections Inspection[]
+  requestMessages RequestMessage[]
 
   @@index([status])
   @@index([ownerUserId])
@@ -396,6 +397,7 @@ model Request {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   unit      Unit      @relation(fields: [unitId], references: [id], onDelete: Cascade)
   resident  Resident? @relation(fields: [residentId], references: [id], onDelete: SetNull)
+  messages  RequestMessage[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -403,6 +405,23 @@ model Request {
   @@index([workspaceId])
   @@index([unitId])
   @@index([residentId])
+}
+
+model RequestMessage {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  requestId    String
+  senderUserId String?
+  senderName   String
+  body         String
+  createdAt    DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  request   Request   @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([requestId])
+  @@index([createdAt])
 }
 
 model Property {

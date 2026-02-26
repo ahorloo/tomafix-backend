@@ -83,4 +83,34 @@ export class TenantService {
       orderBy: { createdAt: 'desc' },
     });
   }
+
+  async listMyRequestMessages(workspaceId: string, userId: string, requestId: string) {
+    const { resident } = await this.getResidentContext(workspaceId, userId);
+    const req = await this.prisma.request.findFirst({ where: { id: requestId, workspaceId, residentId: resident.id } });
+    if (!req) throw new NotFoundException('Request not found');
+
+    return this.prisma.requestMessage.findMany({
+      where: { workspaceId, requestId },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  async addMyRequestMessage(workspaceId: string, userId: string, requestId: string, body: string) {
+    const { resident, user } = await this.getResidentContext(workspaceId, userId);
+    const req = await this.prisma.request.findFirst({ where: { id: requestId, workspaceId, residentId: resident.id } });
+    if (!req) throw new NotFoundException('Request not found');
+
+    const text = String(body || '').trim();
+    if (!text) throw new BadRequestException('Message body is required');
+
+    return this.prisma.requestMessage.create({
+      data: {
+        workspaceId,
+        requestId,
+        senderUserId: user.id,
+        senderName: user.fullName || user.email || resident.fullName,
+        body: text,
+      },
+    });
+  }
 }

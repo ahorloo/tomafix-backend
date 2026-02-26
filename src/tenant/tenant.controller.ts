@@ -39,4 +39,21 @@ export class TenantController {
   notices(@Param('workspaceId') workspaceId: string) {
     return this.tenant.listTenantNotices(workspaceId);
   }
+
+  @WorkspacePermission('requests:view')
+  @Get('requests/:requestId/messages')
+  requestMessages(@Param('workspaceId') workspaceId: string, @Param('requestId') requestId: string, @Req() req: any) {
+    return this.tenant.listMyRequestMessages(workspaceId, req.authUserId, requestId);
+  }
+
+  @WorkspacePermission('requests:create')
+  @Post('requests/:requestId/messages')
+  addRequestMessage(
+    @Param('workspaceId') workspaceId: string,
+    @Param('requestId') requestId: string,
+    @Req() req: any,
+    @Body() dto: { body: string },
+  ) {
+    return this.tenant.addMyRequestMessage(workspaceId, req.authUserId, requestId, dto.body);
+  }
 }

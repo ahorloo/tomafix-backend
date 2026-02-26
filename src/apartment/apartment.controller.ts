@@ -7,6 +7,7 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { MemberRole } from '@prisma/client';
@@ -116,5 +117,26 @@ export class ApartmentController {
     @Body() dto: { status?: 'PENDING' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED'; priority?: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT' },
   ) {
     return this.apartment.updateRequest(workspaceId, requestId, dto as any);
+  }
+
+  @WorkspacePermission('requests:view')
+  @Get('requests/:requestId/messages')
+  listRequestMessages(@Param('workspaceId') workspaceId: string, @Param('requestId') requestId: string) {
+    return this.apartment.listRequestMessages(workspaceId, requestId);
+  }
+
+  @WorkspacePermission('requests:create')
+  @Post('requests/:requestId/messages')
+  addRequestMessage(
+    @Param('workspaceId') workspaceId: string,
+    @Param('requestId') requestId: string,
+    @Req() req: any,
+    @Body() dto: { body: string; senderName?: string },
+  ) {
+    return this.apartment.addRequestMessage(workspaceId, requestId, {
+      senderUserId: req.authUserId,
+      senderName: dto.senderName,
+      body: dto.body,
+    });
   }
 }

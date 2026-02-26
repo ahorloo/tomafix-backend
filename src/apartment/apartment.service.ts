@@ -338,4 +338,44 @@ export class ApartmentService {
       },
     });
   }
+
+  async listRequestMessages(workspaceId: string, requestId: string) {
+    await this.assertApartmentWorkspace(workspaceId);
+    const req = await this.prisma.request.findFirst({ where: { id: requestId, workspaceId } });
+    if (!req) throw new NotFoundException('Request not found');
+
+    return this.prisma.requestMessage.findMany({
+      where: { workspaceId, requestId },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  async addRequestMessage(
+    workspaceId: string,
+    requestId: string,
+    dto: { senderUserId?: string; senderName?: string; body: string },
+  ) {
+    await this.assertApartmentWorkspace(workspaceId);
+    const req = await this.prisma.request.findFirst({ where: { id: requestId, workspaceId } });
+    if (!req) throw new NotFoundException('Request not found');
+
+    const body = String(dto.body || '').trim();
+    if (!body) throw new BadRequestException('Message body is required');
+
+    let senderName = dto.senderName?.trim();
+    if (!senderName && dto.senderUserId) {
+      const user = await this.prisma.user.findUnique({ where: { id: dto.senderUserId } });
+      senderName = user?.fullName || user?.email || 'User';
+    }
+
+    return this.prisma.requestMessage.create({
+      data: {
+        workspaceId,
+        requestId,
+        senderUserId: dto.senderUserId || null,
+        senderName: senderName || 'User',
+        body,
+      },
+    });
+  }
 }
