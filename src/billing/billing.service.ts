@@ -1,4 +1,4 @@
-import { BadGatewayException, BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadGatewayException, BadRequestException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import {
   BillingProvider,
   BillingStatus,
@@ -11,8 +11,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PaystackService } from './paystack.service';
 
 @Injectable()
-export class BillingService {
+export class BillingService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BillingService.name);
+  private dunningTimer: NodeJS.Timeout | null = null;
 
   private assertBillingTransition(from: BillingStatus, to: BillingStatus) {
     const allowed: Record<BillingStatus, BillingStatus[]> = {
@@ -32,6 +33,26 @@ export class BillingService {
     private readonly prisma: PrismaService,
     private readonly paystack: PaystackService,
   ) {}
+
+  onModuleInit() {
+    const mins = Number(process.env.BILLING_DUNNING_INTERVAL_MIN || 0);
+    if (!mins || mins < 1) return;
+
+    this.logger.log(`Billing dunning scheduler enabled: every ${mins} minute(s)`);
+    this.dunningTimer = setInterval(async () => {
+      try {
+        const result = await this.runDunningSweep();
+        this.logger.log(`Dunning sweep: scanned=${result.scanned} pastDue=${result.movedToPastDue} suspended=${result.movedToSuspended}`);
+      } catch (e: any) {
+        this.logger.error(`Dunning sweep failed: ${e?.message || e}`);
+      }
+    }, mins * 60 * 1000);
+  }
+
+  onModuleDestroy() {
+    if (this.dunningTimer) clearInterval(this.dunningTimer);
+    this.dunningTimer = null;
+  }
 
   async listPlans() {
     const plans = await this.prisma.plan.findMany({
@@ -353,14 +374,23 @@ export class BillingService {
     const eventId = `${eventType}:${reference || 'noref'}:${txnId || 'notxn'}`;
 
     // store webhook event (dedupe via unique eventId)
+    const forensicPayload = {
+      event: payload,
+      meta: {
+        signatureVerified: true,
+        receivedAt: new Date().toISOString(),
+        providerTxnId: txnId || null,
+      },
+    };
+
     await this.prisma.webhookEvent.upsert({
       where: { eventId },
-      update: { payload },
+      update: { payload: forensicPayload },
       create: {
         eventId,
         eventType: eventType || 'unknown',
         reference: reference || null,
-        payload,
+        payload: forensicPayload,
         provider: BillingProvider.PAYSTACK,
       },
     });
@@ -428,10 +458,21 @@ export class BillingService {
       ...webhookEvents.map((e) => ({
         at: e.receivedAt,
         type: 'WEBHOOK',
-        label: e.eventType,
+        label: `${e.eventType}${(e as any)?.payload?.meta?.signatureVerified ? ' (verified)' : ''}`,
         ref: e.reference,
       })),
     ].sort((a, b) => +new Date(b.at) - +new Date(a.at));
+
+    const latestPending = ws.payments.find((p) => p.status === PaymentStatus.PENDING) || null;
+    const dunning = latestPending
+      ? {
+          pendingReference: latestPending.reference,
+          pendingSince: latestPending.createdAt,
+          retryRecommendedAt: new Date(latestPending.createdAt.getTime() + 3 * 24 * 60 * 60 * 1000),
+          suspendAt: new Date(latestPending.createdAt.getTime() + 7 * 24 * 60 * 60 * 1000),
+          ageHours: Math.floor((Date.now() - latestPending.createdAt.getTime()) / (60 * 60 * 1000)),
+        }
+      : null;
 
     return {
       workspaceId: ws.id,
@@ -442,6 +483,7 @@ export class BillingService {
       latestSubscription: ws.subscriptions[0] || null,
       payments: ws.payments,
       timeline,
+      dunning,
     };
   }
 
