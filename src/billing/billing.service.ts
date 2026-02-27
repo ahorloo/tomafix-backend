@@ -689,6 +689,19 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
     return { ok: true, scanned: pendingPayments.length, movedToPastDue: pastDue, movedToSuspended: suspended };
   }
 
+  async health() {
+    const webhook = await this.prisma.webhookEvent.findFirst({
+      where: { provider: BillingProvider.PAYSTACK },
+      orderBy: { receivedAt: 'desc' },
+      select: { receivedAt: true },
+    });
+
+    return {
+      ok: true,
+      webhookLastSeenAt: webhook?.receivedAt ?? null,
+    };
+  }
+
   async listFailedWebhookEvents(workspaceId?: string) {
     let refs: string[] | undefined;
     if (workspaceId) {
@@ -748,4 +761,3 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
     throw new BadRequestException('Unsupported webhook event type for replay');
   }
 }
-

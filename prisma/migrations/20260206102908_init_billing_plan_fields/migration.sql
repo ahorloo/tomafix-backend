@@ -1,3 +1,6 @@
+-- CreateSchema
+CREATE SCHEMA IF NOT EXISTS "public";
+
 -- CreateEnum
 CREATE TYPE "TemplateType" AS ENUM ('APARTMENT', 'OFFICE', 'ESTATE');
 
@@ -40,12 +43,18 @@ CREATE TYPE "RequestPriority" AS ENUM ('LOW', 'NORMAL', 'HIGH', 'URGENT');
 -- CreateEnum
 CREATE TYPE "RequestStatus" AS ENUM ('PENDING', 'IN_PROGRESS', 'RESOLVED', 'CLOSED');
 
+-- CreateEnum
+CREATE TYPE "BillingStatus" AS ENUM ('PENDING_PAYMENT', 'ACTIVE', 'PAST_DUE', 'SUSPENDED', 'CANCELLED');
+
 -- CreateTable
 CREATE TABLE "Workspace" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "templateType" "TemplateType" NOT NULL,
     "status" "WorkspaceStatus" NOT NULL DEFAULT 'PENDING_OTP',
+    "planName" TEXT NOT NULL DEFAULT 'Starter',
+    "billingStatus" "BillingStatus" NOT NULL DEFAULT 'ACTIVE',
+    "nextRenewal" TIMESTAMP(3),
     "ownerUserId" TEXT,
     "ownerVerifiedAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -235,11 +244,28 @@ CREATE TABLE "Request" (
     CONSTRAINT "Request_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "Property" (
+    "id" TEXT NOT NULL,
+    "workspaceId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Property_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE INDEX "Workspace_status_idx" ON "Workspace"("status");
 
 -- CreateIndex
 CREATE INDEX "Workspace_ownerUserId_idx" ON "Workspace"("ownerUserId");
+
+-- CreateIndex
+CREATE INDEX "Workspace_planName_idx" ON "Workspace"("planName");
+
+-- CreateIndex
+CREATE INDEX "Workspace_billingStatus_idx" ON "Workspace"("billingStatus");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
@@ -343,6 +369,12 @@ CREATE INDEX "Request_unitId_idx" ON "Request"("unitId");
 -- CreateIndex
 CREATE INDEX "Request_residentId_idx" ON "Request"("residentId");
 
+-- CreateIndex
+CREATE INDEX "Property_workspaceId_idx" ON "Property"("workspaceId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Property_workspaceId_name_key" ON "Property"("workspaceId", "name");
+
 -- AddForeignKey
 ALTER TABLE "Workspace" ADD CONSTRAINT "Workspace_ownerUserId_fkey" FOREIGN KEY ("ownerUserId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
@@ -399,3 +431,6 @@ ALTER TABLE "Request" ADD CONSTRAINT "Request_unitId_fkey" FOREIGN KEY ("unitId"
 
 -- AddForeignKey
 ALTER TABLE "Request" ADD CONSTRAINT "Request_residentId_fkey" FOREIGN KEY ("residentId") REFERENCES "Resident"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Property" ADD CONSTRAINT "Property_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES "Workspace"("id") ON DELETE CASCADE ON UPDATE CASCADE;

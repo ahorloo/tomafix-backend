@@ -8,6 +8,7 @@
   "scripts": {
     "prebuild": "pnpm run prisma:generate",
     "build": "pnpm exec nest build",
+    "test": "pnpm exec jest --passWithNoTests",
     "start": "dotenv -e .env -- pnpm exec nest start",
     "start:dev": "dotenv -e .env -- pnpm exec nest start --watch",
     "start:node": "dotenv -e .env -- node dist/src/main.js",
@@ -46,11 +47,14 @@
     "@nestjs/cli": "^11.0.0",
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.0.0",
+    "@types/jest": "^29.5.12",
     "@types/compression": "^1.8.1",
     "@types/cookie-parser": "^1.4.10",
     "@types/express": "^4.17.21",
     "@types/node": "^22.0.0",
+    "jest": "^29.7.0",
     "ts-node": "^10.9.2",
+    "ts-jest": "^29.2.5",
     "typescript": "^5.7.3"
   },
   "engines": {
