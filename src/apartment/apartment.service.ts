@@ -209,6 +209,14 @@ export class ApartmentService {
     if (dto.unitId) {
       const unit = await this.prisma.unit.findFirst({ where: { id: dto.unitId, workspaceId } });
       if (!unit) throw new BadRequestException('unitId does not belong to this workspace');
+
+      const existingActive = await this.prisma.resident.findFirst({
+        where: { workspaceId, unitId: dto.unitId, status: ResidentStatus.ACTIVE },
+        select: { id: true, fullName: true },
+      });
+      if (existingActive) {
+        throw new ConflictException(`Unit is already assigned to active resident: ${existingActive.fullName}`);
+      }
     }
 
     const resident = await this.prisma.resident.create({
@@ -255,6 +263,19 @@ export class ApartmentService {
     if (dto.unitId !== undefined && dto.unitId !== null && dto.unitId !== '') {
       const unit = await this.prisma.unit.findFirst({ where: { id: dto.unitId, workspaceId } });
       if (!unit) throw new BadRequestException('unitId does not belong to this workspace');
+
+      const existingActive = await this.prisma.resident.findFirst({
+        where: {
+          workspaceId,
+          unitId: dto.unitId,
+          status: ResidentStatus.ACTIVE,
+          id: { not: residentId },
+        },
+        select: { id: true, fullName: true },
+      });
+      if (existingActive) {
+        throw new ConflictException(`Unit is already assigned to active resident: ${existingActive.fullName}`);
+      }
     }
 
     const updated = await this.prisma.resident.update({
