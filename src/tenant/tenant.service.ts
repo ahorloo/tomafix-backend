@@ -1,10 +1,36 @@
-import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { RequestPriority, RequestStatus } from '@prisma/client';
 
 @Injectable()
 export class TenantService {
+  private readonly logger = new Logger(TenantService.name);
+
   constructor(private readonly prisma: PrismaService) {}
+
+  private async sendEmail(args: { to: string; subject: string; html: string }) {
+    const apiKey = process.env.RESEND_API_KEY;
+    const from = process.env.RESEND_FROM || process.env.EMAIL_FROM || 'TomaFix <onboarding@resend.dev>';
+
+    if (!apiKey) {
+      this.logger.warn(`RESEND_API_KEY not set. Skipping email to ${args.to}`);
+      return;
+    }
+
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ from, to: [args.to], subject: args.subject, html: args.html }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Resend send failed (${res.status}): ${body}`);
+    }
+  }
 
   private async getResidentContext(workspaceId: string, userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
@@ -64,7 +90,7 @@ export class TenantService {
     const { resident } = await this.getResidentContext(workspaceId, userId);
     if (!resident.unitId) throw new BadRequestException('Resident has no assigned unit');
 
-    return this.prisma.request.create({
+    const created = await this.prisma.request.create({
       data: {
         workspaceId,
         unitId: resident.unitId,
@@ -75,6 +101,25 @@ export class TenantService {
       },
       include: { unit: { select: { id: true, label: true } } },
     });
+
+    try {
+      const ws = await this.prisma.workspace.findUnique({
+        where: { id: workspaceId },
+        include: { owner: { select: { email: true, fullName: true } } },
+      });
+      const ownerEmail = ws?.owner?.email?.toLowerCase();
+      if (ownerEmail) {
+        await this.sendEmail({
+          to: ownerEmail,
+          subject: `New tenant request • ${ws?.name || 'Workspace'}`,
+          html: `<p>A tenant submitted a new request.</p><p><b>Resident:</b> ${resident.fullName}</p><p><b>Unit:</b> ${created.unit?.label || '-'}</p><p><b>Title:</b> ${created.title}</p>`,
+        });
+      }
+    } catch (e: any) {
+      this.logger.warn(`Owner notification failed: ${e?.message || e}`);
+    }
+
+    return created;
   }
 
   async listTenantNotices(workspaceId: string) {
@@ -103,7 +148,7 @@ export class TenantService {
     const text = String(body || '').trim();
     if (!text) throw new BadRequestException('Message body is required');
 
-    return this.prisma.requestMessage.create({
+    const msg = await this.prisma.requestMessage.create({
       data: {
         workspaceId,
         requestId,
@@ -112,5 +157,24 @@ export class TenantService {
         body: text,
       },
     });
+
+    try {
+      const ws = await this.prisma.workspace.findUnique({
+        where: { id: workspaceId },
+        include: { owner: { select: { email: true } } },
+      });
+      const ownerEmail = ws?.owner?.email?.toLowerCase();
+      if (ownerEmail) {
+        await this.sendEmail({
+          to: ownerEmail,
+          subject: `Tenant message on request • ${ws?.name || 'Workspace'}`,
+          html: `<p>Your tenant sent a message on request <b>${req.title}</b>.</p><p><b>From:</b> ${msg.senderName}</p><p>${msg.body}</p>`,
+        });
+      }
+    } catch (e: any) {
+      this.logger.warn(`Owner message notification failed: ${e?.message || e}`);
+    }
+
+    return msg;
   }
 }

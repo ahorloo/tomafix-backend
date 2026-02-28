@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import {
   Prisma,
   RequestPriority,
@@ -17,10 +17,36 @@ import { CreateRequestDto } from './dto/create-request.dto';
 
 @Injectable()
 export class ApartmentService {
+  private readonly logger = new Logger(ApartmentService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly onboarding: OnboardingService,
   ) {}
+
+  private async sendEmail(args: { to: string; subject: string; html: string }) {
+    const apiKey = process.env.RESEND_API_KEY;
+    const from = process.env.RESEND_FROM || process.env.EMAIL_FROM || 'TomaFix <onboarding@resend.dev>';
+
+    if (!apiKey) {
+      this.logger.warn(`RESEND_API_KEY not set. Skipping email to ${args.to}`);
+      return;
+    }
+
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ from, to: [args.to], subject: args.subject, html: args.html }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Resend send failed (${res.status}): ${body}`);
+    }
+  }
 
   private async assertApartmentWorkspace(workspaceId: string) {
     const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
@@ -335,12 +361,16 @@ export class ApartmentService {
     const unit = await this.prisma.unit.findFirst({ where: { id: dto.unitId, workspaceId } });
     if (!unit) throw new BadRequestException('unitId does not belong to this workspace');
 
+    let resident: { id: string; fullName: string; email: string | null } | null = null;
     if (dto.residentId) {
-      const resident = await this.prisma.resident.findFirst({ where: { id: dto.residentId, workspaceId } });
+      resident = await this.prisma.resident.findFirst({
+        where: { id: dto.residentId, workspaceId },
+        select: { id: true, fullName: true, email: true },
+      });
       if (!resident) throw new BadRequestException('residentId does not belong to this workspace');
     }
 
-    return this.prisma.request.create({
+    const created = await this.prisma.request.create({
       data: {
         workspaceId,
         unitId: dto.unitId,
@@ -355,6 +385,20 @@ export class ApartmentService {
         resident: { select: { id: true, fullName: true } },
       },
     });
+
+    if (resident?.email) {
+      try {
+        await this.sendEmail({
+          to: resident.email,
+          subject: `Request created • ${dto.title.trim()}`,
+          html: `<p>Your request has been created.</p><p><b>Title:</b> ${created.title}</p><p><b>Unit:</b> ${created.unit?.label || '-'}</p><p>Status: Pending</p>`,
+        });
+      } catch (e: any) {
+        this.logger.warn(`Tenant request-create notification failed: ${e?.message || e}`);
+      }
+    }
+
+    return created;
   }
 
   async updateRequest(
@@ -409,7 +453,7 @@ export class ApartmentService {
       senderName = user?.fullName || user?.email || 'User';
     }
 
-    return this.prisma.requestMessage.create({
+    const msg = await this.prisma.requestMessage.create({
       data: {
         workspaceId,
         requestId,
@@ -418,5 +462,25 @@ export class ApartmentService {
         body,
       },
     });
+
+    if (req.residentId) {
+      try {
+        const resident = await this.prisma.resident.findFirst({
+          where: { id: req.residentId, workspaceId },
+          select: { email: true },
+        });
+        if (resident?.email) {
+          await this.sendEmail({
+            to: resident.email,
+            subject: `Update on your request • ${req.title}`,
+            html: `<p>You have a new message on your request.</p><p><b>From:</b> ${msg.senderName}</p><p>${msg.body}</p>`,
+          });
+        }
+      } catch (e: any) {
+        this.logger.warn(`Tenant request-message notification failed: ${e?.message || e}`);
+      }
+    }
+
+    return msg;
   }
 }
