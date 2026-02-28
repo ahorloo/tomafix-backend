@@ -473,7 +473,7 @@ export class ApartmentService {
           await this.sendEmail({
             to: resident.email,
             subject: `Update on your request • ${req.title}`,
-            html: `<p>You have a new message on your request.</p><p><b>From:</b> ${msg.senderName}</p><p>${msg.body}</p>`,
+            html: `<p>You have a new update on your request.</p><p><b>From:</b> ${msg.senderName}</p><p>Go to your dashboard and view.</p>`,
           });
         }
       } catch (e: any) {
