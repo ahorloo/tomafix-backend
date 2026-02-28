@@ -456,11 +456,13 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       where: { id: workspaceId },
       include: {
         payments: { orderBy: { createdAt: 'desc' }, take: 1 },
-        subscriptions: { orderBy: { createdAt: 'desc' }, take: 1 },
+        subscriptions: { orderBy: { createdAt: 'desc' }, take: 1, include: { plan: true } },
       },
     });
 
     if (!ws) throw new BadRequestException('Workspace not found');
+
+    const latestSub = ws.subscriptions[0] || null;
 
     return {
       workspaceId: ws.id,
@@ -468,8 +470,10 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       name: ws.name,
       templateType: ws.templateType,
       status: ws.status,
+      planName: latestSub?.plan?.name || ws.planName,
+      nextRenewal: ws.nextRenewal ?? latestSub?.currentPeriodEnd ?? null,
       latestPayment: ws.payments[0] || null,
-      latestSubscription: ws.subscriptions[0] || null,
+      latestSubscription: latestSub,
     };
   }
 
@@ -505,7 +509,11 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       })),
     ].sort((a, b) => +new Date(b.at) - +new Date(a.at));
 
-    const latestPending = ws.payments.find((p) => p.status === PaymentStatus.PENDING) || null;
+    const latestPending =
+      ws.billingStatus === BillingStatus.ACTIVE
+        ? null
+        : ws.payments.find((p) => p.status === PaymentStatus.PENDING) || null;
+
     const dunning = latestPending
       ? {
           pendingReference: latestPending.reference,
@@ -516,6 +524,8 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
         }
       : null;
 
+    const latestSubscription = ws.subscriptions[0] || null;
+
     return {
       workspaceId: ws.id,
       id: ws.id,
@@ -523,9 +533,9 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       templateType: ws.templateType,
       workspaceStatus: ws.status,
       billingStatus: ws.billingStatus,
-      nextRenewal: ws.nextRenewal,
-      planName: ws.planName,
-      latestSubscription: ws.subscriptions[0] || null,
+      nextRenewal: ws.nextRenewal ?? latestSubscription?.currentPeriodEnd ?? null,
+      planName: latestSubscription?.plan?.name || ws.planName,
+      latestSubscription,
       payments: ws.payments,
       timeline,
       dunning,
@@ -533,53 +543,26 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
   }
 
   async changeWorkspacePlan(workspaceId: string, planId: string) {
-    const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
-    if (!ws) throw new NotFoundException('Workspace not found');
-
     const plan = await this.prisma.plan.findUnique({ where: { id: planId } });
     if (!plan || !plan.isActive) throw new BadRequestException('Plan not found or inactive');
-
-    if ((ws.billingStatus as BillingStatus) !== BillingStatus.ACTIVE) {
-      this.assertBillingTransition(ws.billingStatus as BillingStatus, BillingStatus.ACTIVE);
-    }
-
-    await this.prisma.workspace.update({
-      where: { id: workspaceId },
-      data: {
-        planName: plan.name,
-        billingStatus: BillingStatus.ACTIVE,
-      },
-    });
-
-    const currentSub = await this.prisma.subscription.findFirst({ where: { workspaceId } });
-    const periodEnd = new Date(Date.now() + (plan.interval === 'YEARLY' ? 365 : 30) * 24 * 60 * 60 * 1000);
-
-    if (currentSub) {
-      await this.prisma.subscription.update({
-        where: { id: currentSub.id },
-        data: { planId: plan.id, status: SubscriptionStatus.ACTIVE, currentPeriodEnd: periodEnd },
-      });
-    } else {
-      await this.prisma.subscription.create({
-        data: {
-          workspaceId,
-          planId: plan.id,
-          provider: BillingProvider.PAYSTACK,
-          status: SubscriptionStatus.ACTIVE,
-          currentPeriodEnd: periodEnd,
-        },
-      });
-    }
 
     await this.prisma.auditLog.create({
       data: {
         workspaceId,
-        action: 'billing.plan_changed',
+        action: 'billing.plan_switch_checkout_started',
         meta: { planId: plan.id, planName: plan.name },
       },
     });
 
-    return { ok: true, workspaceId, planName: plan.name };
+    const checkout = await this.initPaystackPayment({ workspaceId, planId });
+
+    return {
+      workspaceId,
+      planId,
+      planName: plan.name,
+      requiresPayment: true,
+      ...checkout,
+    };
   }
 
   async retryLatestPayment(workspaceId: string) {
