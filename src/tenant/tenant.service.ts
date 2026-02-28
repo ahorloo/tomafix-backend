@@ -81,7 +81,14 @@ export class TenantService {
     const { resident } = await this.getResidentContext(workspaceId, userId);
     return this.prisma.request.findMany({
       where: { workspaceId, residentId: resident.id },
-      include: { unit: { select: { id: true, label: true } } },
+      include: {
+        unit: { select: { id: true, label: true } },
+        messages: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { id: true, body: true, senderName: true, createdAt: true },
+        },
+      },
       orderBy: { createdAt: 'desc' },
     });
   }
