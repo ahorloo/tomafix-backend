@@ -27,10 +27,8 @@ export class WorkspaceAccessGuard implements CanActivate {
     const req = context.switchToHttp().getRequest();
     const userId: string | undefined = req.authUserId;
     const workspaceId: string | undefined = req.params?.workspaceId;
-    const strict = String(process.env.AUTH_STRICT || '').toLowerCase() === 'true';
-
     if (!workspaceId) return false;
-    if (!userId) return !strict;
+    if (!userId) return false;
 
     const allowedRoles = this.reflector.getAllAndOverride<MemberRole[]>(WORKSPACE_ROLES_KEY, [
       context.getHandler(),

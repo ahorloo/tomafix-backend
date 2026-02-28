@@ -7,13 +7,9 @@ export class AuthGuard implements CanActivate {
 
   canActivate(context: ExecutionContext): boolean {
     const req = context.switchToHttp().getRequest();
-    const strict = String(process.env.AUTH_STRICT || '').toLowerCase() === 'true';
 
     const authHeader = req.headers?.authorization;
-    if (!authHeader) {
-      if (strict) return false;
-      return true;
-    }
+    if (!authHeader) return false;
 
     const payload = this.auth.verifyBearerToken(authHeader);
     req.authUserId = payload.uid;
