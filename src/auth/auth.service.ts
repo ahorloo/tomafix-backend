@@ -224,7 +224,16 @@ export class AuthService {
       where: { userId, workspaceId, isActive: true },
       include: {
         workspace: {
-          select: { id: true, templateType: true, status: true, name: true, permissionPolicy: true },
+          select: {
+            id: true,
+            templateType: true,
+            status: true,
+            name: true,
+            permissionPolicy: true,
+            billingStatus: true,
+            nextRenewal: true,
+            planName: true,
+          },
         },
       },
     });
