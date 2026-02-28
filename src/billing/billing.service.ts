@@ -461,6 +461,9 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
 
     return {
       workspaceId: ws.id,
+      id: ws.id,
+      name: ws.name,
+      templateType: ws.templateType,
       status: ws.status,
       latestPayment: ws.payments[0] || null,
       latestSubscription: ws.subscriptions[0] || null,
@@ -512,6 +515,9 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
 
     return {
       workspaceId: ws.id,
+      id: ws.id,
+      name: ws.name,
+      templateType: ws.templateType,
       workspaceStatus: ws.status,
       billingStatus: ws.billingStatus,
       nextRenewal: ws.nextRenewal,
