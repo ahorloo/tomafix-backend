@@ -536,7 +536,9 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
     const plan = await this.prisma.plan.findUnique({ where: { id: planId } });
     if (!plan || !plan.isActive) throw new BadRequestException('Plan not found or inactive');
 
-    this.assertBillingTransition(ws.billingStatus as BillingStatus, BillingStatus.ACTIVE);
+    if ((ws.billingStatus as BillingStatus) !== BillingStatus.ACTIVE) {
+      this.assertBillingTransition(ws.billingStatus as BillingStatus, BillingStatus.ACTIVE);
+    }
 
     await this.prisma.workspace.update({
       where: { id: workspaceId },
