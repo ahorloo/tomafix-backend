@@ -61,10 +61,30 @@ export const PLAN_MAP: Record<PlanName, PlanConfig> = {
   },
 };
 
-export function assertPlanExists(planName: string): asserts planName is PlanName {
-  if (!planName || !Object.prototype.hasOwnProperty.call(PLAN_MAP, planName)) {
-    throw new Error(`Unknown plan: ${planName}`);
+const PLAN_ALIASES: Record<string, PlanName> = {
+  starter: 'Starter',
+  growth: 'Growth',
+  tomaprime: 'TomaPrime',
+  'toma-prime': 'TomaPrime',
+  'toma prime': 'TomaPrime',
+};
+
+export function resolvePlanName(input?: string | null): PlanName {
+  const raw = String(input || '').trim();
+  if (!raw) return 'Starter';
+
+  if (Object.prototype.hasOwnProperty.call(PLAN_MAP, raw)) {
+    return raw as PlanName;
   }
+
+  const key = raw.toLowerCase();
+  if (PLAN_ALIASES[key]) return PLAN_ALIASES[key];
+
+  throw new Error(`Unknown plan: ${input}`);
+}
+
+export function assertPlanExists(planName: string): asserts planName is PlanName {
+  resolvePlanName(planName);
 }
 
 export function getEntitlements(planName: PlanName) {

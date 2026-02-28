@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   Prisma,
   RequestPriority,
@@ -10,6 +10,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
+import { getEntitlements, resolvePlanName } from '../billing/planConfig';
 import { CreateUnitDto } from './dto/create-unit.dto';
 import { CreateResidentDto } from './dto/create-resident.dto';
 import { CreateRequestDto } from './dto/create-request.dto';
@@ -28,6 +29,24 @@ export class ApartmentService {
       throw new BadRequestException('Workspace is not an APARTMENT template');
     }
     return ws;
+  }
+
+  private async assertUnitsPlanLimit(workspaceId: string) {
+    const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
+    if (!ws) throw new NotFoundException('Workspace not found');
+
+    const planName = resolvePlanName((ws as any).planName || 'Starter');
+    const limit = getEntitlements(planName).limits.units;
+    const used = await this.prisma.unit.count({ where: { workspaceId } });
+
+    if (used >= limit) {
+      throw new ForbiddenException({
+        code: 'PLAN_LIMIT_EXCEEDED',
+        message: `You have reached your ${planName} unit limit (${used}/${limit}). Upgrade plan to add more units.`,
+        requiredPlan: planName === 'Starter' ? 'Growth' : 'TomaPrime',
+        context: { limit: 'units', used, max: limit },
+      } as any);
+    }
   }
 
   async getDashboard(workspaceId: string) {
@@ -81,6 +100,7 @@ export class ApartmentService {
 
   async createUnit(workspaceId: string, dto: CreateUnitDto) {
     await this.assertApartmentWorkspace(workspaceId);
+    await this.assertUnitsPlanLimit(workspaceId);
 
     const label = dto.label.trim();
     const block = dto.block?.trim() || null;
