@@ -114,9 +114,12 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
     if (!workspace) throw new BadRequestException('Workspace not found');
     if (!workspace.owner?.email) throw new BadRequestException('Owner email missing');
 
-    if (workspace.status !== WorkspaceStatus.PENDING_PAYMENT) {
+    const canStartCheckout =
+      workspace.status === WorkspaceStatus.PENDING_PAYMENT || workspace.status === WorkspaceStatus.ACTIVE;
+
+    if (!canStartCheckout) {
       throw new BadRequestException(
-        `Workspace status must be PENDING_PAYMENT, got ${workspace.status}`,
+        `Workspace status must allow billing checkout, got ${workspace.status}`,
       );
     }
 
