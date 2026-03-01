@@ -21,6 +21,7 @@ type CreateInviteDto = {
 
 type AcceptInviteDto = {
   token: string;
+  email: string;
   fullName?: string;
 };
 

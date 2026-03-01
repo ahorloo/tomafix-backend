@@ -78,6 +78,18 @@ export class OnboardingService {
     const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
     if (!ws) throw new BadRequestException('Workspace not found');
 
+    // Invalidate older open invites for same workspace/email to avoid confusion at scale.
+    await this.prisma.invite.updateMany({
+      where: {
+        workspaceId,
+        email,
+        role: MemberRole.RESIDENT,
+        acceptedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      data: { expiresAt: new Date() },
+    });
+
     const rawToken = randomBytes(24).toString('base64url');
     const tokenHash = createHash('sha256').update(rawToken).digest('hex');
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
@@ -101,12 +113,13 @@ export class OnboardingService {
       html: this.inviteEmailHtml({ inviteUrl, residentName: input.residentName }),
     });
 
-    return { ok: true, inviteUrl };
+    return { ok: true, inviteUrl, expiresAt, status: 'SENT' };
   }
 
-  async acceptTenantInvite(input: { token: string; fullName?: string }) {
+  async acceptTenantInvite(input: { token: string; email: string; fullName?: string }) {
     const token = String(input.token || '').trim();
-    if (!token) throw new BadRequestException('token is required');
+    const providedEmail = String(input.email || '').trim().toLowerCase();
+    if (!token || !providedEmail) throw new BadRequestException('token and email are required');
 
     const tokenHash = createHash('sha256').update(token).digest('hex');
     const invite = await this.prisma.invite.findUnique({ where: { tokenHash } });
@@ -117,6 +130,9 @@ export class OnboardingService {
 
     const email = String(invite.email || '').trim().toLowerCase();
     if (!email) throw new BadRequestException('Invite email is missing');
+    if (email !== providedEmail) {
+      throw new UnauthorizedException('Invite email mismatch');
+    }
 
     const user = await this.prisma.user.upsert({
       where: { email },
