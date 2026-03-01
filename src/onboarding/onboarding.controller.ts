@@ -25,6 +25,20 @@ type AcceptInviteDto = {
   fullName?: string;
 };
 
+type BulkInviteRowDto = {
+  fullName?: string;
+  email?: string;
+  phone?: string;
+  unitLabel?: string;
+  block?: string;
+  floor?: string;
+};
+
+type BulkInviteDto = {
+  workspaceId: string;
+  rows: BulkInviteRowDto[];
+};
+
 @Controller('onboarding')
 export class OnboardingController {
   constructor(private readonly onboarding: OnboardingService) {}
@@ -54,5 +68,15 @@ export class OnboardingController {
   @Post('invites/accept')
   acceptInvite(@Body() dto: AcceptInviteDto) {
     return this.onboarding.acceptTenantInvite(dto);
+  }
+
+  @Post('invites/bulk/preview')
+  previewBulkInvites(@Body() dto: BulkInviteDto) {
+    return this.onboarding.previewBulkTenantInvites(dto);
+  }
+
+  @Post('invites/bulk/commit')
+  commitBulkInvites(@Body() dto: BulkInviteDto) {
+    return this.onboarding.commitBulkTenantInvites(dto);
   }
 }

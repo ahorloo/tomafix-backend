@@ -156,6 +156,135 @@ export class OnboardingService {
     return this.auth.createSessionForUser(user.id, invite.workspaceId);
   }
 
+  async previewBulkTenantInvites(input: {
+    workspaceId: string;
+    rows: Array<{
+      fullName?: string;
+      email?: string;
+      phone?: string;
+      unitLabel?: string;
+      block?: string;
+      floor?: string;
+    }>;
+  }) {
+    const workspaceId = String(input.workspaceId || '').trim();
+    const rows = Array.isArray(input.rows) ? input.rows : [];
+    if (!workspaceId) throw new BadRequestException('workspaceId is required');
+
+    const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
+    if (!ws) throw new BadRequestException('Workspace not found');
+
+    const units = await this.prisma.unit.findMany({ where: { workspaceId }, select: { id: true, label: true, block: true, floor: true } });
+    const residents = await this.prisma.resident.findMany({ where: { workspaceId }, select: { email: true, unitId: true, status: true } });
+
+    const unitByKey = new Map<string, (typeof units)[number]>();
+    for (const u of units) {
+      const key = `${u.label.toLowerCase()}|${(u.block || '').toLowerCase()}|${(u.floor || '').toLowerCase()}`;
+      unitByKey.set(key, u);
+      unitByKey.set(`${u.label.toLowerCase()}||`, u);
+    }
+
+    const existingEmails = new Set(
+      residents.map((r) => String(r.email || '').trim().toLowerCase()).filter(Boolean),
+    );
+    const occupiedUnits = new Set(
+      residents.filter((r) => r.status === 'ACTIVE' && !!r.unitId).map((r) => r.unitId as string),
+    );
+
+    const seenEmails = new Set<string>();
+    const validRows: any[] = [];
+    const invalidRows: any[] = [];
+
+    rows.forEach((raw, idx) => {
+      const rowNo = idx + 1;
+      const fullName = String(raw.fullName || '').trim();
+      const email = String(raw.email || '').trim().toLowerCase();
+      const phone = String(raw.phone || '').trim();
+      const unitLabel = String(raw.unitLabel || '').trim();
+      const block = String(raw.block || '').trim();
+      const floor = String(raw.floor || '').trim();
+      const issues: string[] = [];
+
+      if (!fullName) issues.push('Missing fullName');
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) issues.push('Invalid email');
+      if (!unitLabel) issues.push('Missing unitLabel');
+
+      if (email && seenEmails.has(email)) issues.push('Duplicate email in upload');
+      if (email && existingEmails.has(email)) issues.push('Email already exists in workspace');
+
+      const unitKey = `${unitLabel.toLowerCase()}|${block.toLowerCase()}|${floor.toLowerCase()}`;
+      const unit = unitByKey.get(unitKey) || unitByKey.get(`${unitLabel.toLowerCase()}||`);
+      if (!unit) issues.push('Unit not found');
+      if (unit && occupiedUnits.has(unit.id)) issues.push('Unit already assigned to active resident');
+
+      if (issues.length) {
+        invalidRows.push({ rowNo, fullName, email, unitLabel, block, floor, issues });
+      } else {
+        seenEmails.add(email);
+        validRows.push({ rowNo, fullName, email, phone: phone || null, unitId: unit!.id, unitLabel: unit!.label });
+      }
+    });
+
+    return {
+      workspaceId,
+      summary: {
+        total: rows.length,
+        valid: validRows.length,
+        invalid: invalidRows.length,
+      },
+      validRows,
+      invalidRows,
+    };
+  }
+
+  async commitBulkTenantInvites(input: {
+    workspaceId: string;
+    rows: Array<{
+      fullName?: string;
+      email?: string;
+      phone?: string;
+      unitLabel?: string;
+      block?: string;
+      floor?: string;
+    }>;
+  }) {
+    const preview = await this.previewBulkTenantInvites(input);
+
+    const sent: any[] = [];
+    for (const row of preview.validRows as any[]) {
+      const resident = await this.prisma.resident.create({
+        data: {
+          workspaceId: preview.workspaceId,
+          fullName: row.fullName,
+          email: row.email,
+          phone: row.phone,
+          unitId: row.unitId,
+          role: MemberRole.RESIDENT as any,
+          status: 'ACTIVE' as any,
+        },
+      });
+
+      const invite = await this.createTenantInvite({
+        workspaceId: preview.workspaceId,
+        email: row.email,
+        residentName: row.fullName,
+      });
+
+      sent.push({ rowNo: row.rowNo, residentId: resident.id, email: row.email, inviteUrl: invite.inviteUrl });
+    }
+
+    return {
+      workspaceId: preview.workspaceId,
+      summary: {
+        total: input.rows?.length || 0,
+        sent: sent.length,
+        skipped: preview.invalidRows.length,
+      },
+      sent,
+      invalidRows: preview.invalidRows,
+    };
+  }
+
   /**
    * Step 2 (Strict): Send OTP to verify the owner email.
    * Uses Resend if RESEND_API_KEY is present; otherwise logs OTP to console.
