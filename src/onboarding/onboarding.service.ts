@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   HttpException,
   HttpStatus,
   Injectable,
@@ -70,13 +71,27 @@ export class OnboardingService {
     return this.verifyOwnerEmailOtp(dto.workspaceId, dto.email, dto.code);
   }
 
-  async createTenantInvite(input: { workspaceId: string; email: string; residentName?: string }) {
+  private async assertInviteManager(workspaceId: string, actorUserId?: string) {
+    if (!actorUserId) return;
+    const m = await this.prisma.workspaceMember.findFirst({
+      where: {
+        workspaceId,
+        userId: actorUserId,
+        isActive: true,
+        role: { in: [MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF] },
+      },
+    });
+    if (!m) throw new ForbiddenException('Forbidden resource');
+  }
+
+  async createTenantInvite(input: { workspaceId: string; email: string; residentName?: string }, actorUserId?: string) {
     const workspaceId = String(input.workspaceId || '').trim();
     const email = String(input.email || '').trim().toLowerCase();
     if (!workspaceId || !email) throw new BadRequestException('workspaceId and email are required');
 
     const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
     if (!ws) throw new BadRequestException('Workspace not found');
+    await this.assertInviteManager(workspaceId, actorUserId);
 
     const sentLastHour = await this.prisma.invite.count({
       where: {
@@ -127,9 +142,10 @@ export class OnboardingService {
     return { ok: true, inviteUrl, expiresAt, status: 'SENT' };
   }
 
-  async listTenantInvites(workspaceId: string) {
+  async listTenantInvites(workspaceId: string, actorUserId?: string) {
     const wsId = String(workspaceId || '').trim();
     if (!wsId) throw new BadRequestException('workspaceId is required');
+    await this.assertInviteManager(wsId, actorUserId);
 
     const invites = await this.prisma.invite.findMany({
       where: { workspaceId: wsId, role: MemberRole.RESIDENT },
@@ -148,26 +164,31 @@ export class OnboardingService {
     }));
   }
 
-  async resendTenantInvite(input: { workspaceId: string; inviteId: string; residentName?: string }) {
+  async resendTenantInvite(input: { workspaceId: string; inviteId: string; residentName?: string }, actorUserId?: string) {
     const workspaceId = String(input.workspaceId || '').trim();
     const inviteId = String(input.inviteId || '').trim();
     if (!workspaceId || !inviteId) throw new BadRequestException('workspaceId and inviteId are required');
+    await this.assertInviteManager(workspaceId, actorUserId);
 
     const invite = await this.prisma.invite.findFirst({ where: { id: inviteId, workspaceId } });
     if (!invite || !invite.email) throw new BadRequestException('Invite not found');
     if (invite.acceptedAt) throw new BadRequestException('Invite already accepted');
 
-    return this.createTenantInvite({
-      workspaceId,
-      email: invite.email,
-      residentName: input.residentName,
-    });
+    return this.createTenantInvite(
+      {
+        workspaceId,
+        email: invite.email,
+        residentName: input.residentName,
+      },
+      actorUserId,
+    );
   }
 
-  async revokeTenantInvite(input: { workspaceId: string; inviteId: string }) {
+  async revokeTenantInvite(input: { workspaceId: string; inviteId: string }, actorUserId?: string) {
     const workspaceId = String(input.workspaceId || '').trim();
     const inviteId = String(input.inviteId || '').trim();
     if (!workspaceId || !inviteId) throw new BadRequestException('workspaceId and inviteId are required');
+    await this.assertInviteManager(workspaceId, actorUserId);
 
     const invite = await this.prisma.invite.findFirst({ where: { id: inviteId, workspaceId } });
     if (!invite) throw new BadRequestException('Invite not found');
@@ -217,20 +238,24 @@ export class OnboardingService {
     return this.auth.createSessionForUser(user.id, invite.workspaceId);
   }
 
-  async previewBulkTenantInvites(input: {
-    workspaceId: string;
-    rows: Array<{
-      fullName?: string;
-      email?: string;
-      phone?: string;
-      unitLabel?: string;
-      block?: string;
-      floor?: string;
-    }>;
-  }) {
+  async previewBulkTenantInvites(
+    input: {
+      workspaceId: string;
+      rows: Array<{
+        fullName?: string;
+        email?: string;
+        phone?: string;
+        unitLabel?: string;
+        block?: string;
+        floor?: string;
+      }>;
+    },
+    actorUserId?: string,
+  ) {
     const workspaceId = String(input.workspaceId || '').trim();
     const rows = Array.isArray(input.rows) ? input.rows : [];
     if (!workspaceId) throw new BadRequestException('workspaceId is required');
+    await this.assertInviteManager(workspaceId, actorUserId);
 
     const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
     if (!ws) throw new BadRequestException('Workspace not found');
@@ -298,18 +323,21 @@ export class OnboardingService {
     };
   }
 
-  async commitBulkTenantInvites(input: {
-    workspaceId: string;
-    rows: Array<{
-      fullName?: string;
-      email?: string;
-      phone?: string;
-      unitLabel?: string;
-      block?: string;
-      floor?: string;
-    }>;
-  }) {
-    const preview = await this.previewBulkTenantInvites(input);
+  async commitBulkTenantInvites(
+    input: {
+      workspaceId: string;
+      rows: Array<{
+        fullName?: string;
+        email?: string;
+        phone?: string;
+        unitLabel?: string;
+        block?: string;
+        floor?: string;
+      }>;
+    },
+    actorUserId?: string,
+  ) {
+    const preview = await this.previewBulkTenantInvites(input, actorUserId);
 
     const sent: any[] = [];
     for (const row of preview.validRows as any[]) {

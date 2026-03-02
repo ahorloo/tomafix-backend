@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { OnboardingService } from './onboarding.service';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
+import { AuthGuard } from '../auth/auth.guard';
 
 type SendOtpDto = {
   workspaceId: string;
@@ -71,24 +72,28 @@ export class OnboardingController {
     return this.onboarding.verifyOtpEmail(dto);
   }
 
+  @UseGuards(AuthGuard)
   @Get('invites')
-  listInvites(@Query('workspaceId') workspaceId: string) {
-    return this.onboarding.listTenantInvites(workspaceId);
+  listInvites(@Query('workspaceId') workspaceId: string, @Req() req: any) {
+    return this.onboarding.listTenantInvites(workspaceId, req?.authUserId);
   }
 
+  @UseGuards(AuthGuard)
   @Post('invites/create')
-  createInvite(@Body() dto: CreateInviteDto) {
-    return this.onboarding.createTenantInvite(dto);
+  createInvite(@Body() dto: CreateInviteDto, @Req() req: any) {
+    return this.onboarding.createTenantInvite(dto, req?.authUserId);
   }
 
+  @UseGuards(AuthGuard)
   @Post('invites/resend')
-  resendInvite(@Body() dto: ResendInviteDto) {
-    return this.onboarding.resendTenantInvite(dto);
+  resendInvite(@Body() dto: ResendInviteDto, @Req() req: any) {
+    return this.onboarding.resendTenantInvite(dto, req?.authUserId);
   }
 
+  @UseGuards(AuthGuard)
   @Post('invites/revoke')
-  revokeInvite(@Body() dto: RevokeInviteDto) {
-    return this.onboarding.revokeTenantInvite(dto);
+  revokeInvite(@Body() dto: RevokeInviteDto, @Req() req: any) {
+    return this.onboarding.revokeTenantInvite(dto, req?.authUserId);
   }
 
   @Post('invites/accept')
@@ -96,13 +101,15 @@ export class OnboardingController {
     return this.onboarding.acceptTenantInvite(dto);
   }
 
+  @UseGuards(AuthGuard)
   @Post('invites/bulk/preview')
-  previewBulkInvites(@Body() dto: BulkInviteDto) {
-    return this.onboarding.previewBulkTenantInvites(dto);
+  previewBulkInvites(@Body() dto: BulkInviteDto, @Req() req: any) {
+    return this.onboarding.previewBulkTenantInvites(dto, req?.authUserId);
   }
 
+  @UseGuards(AuthGuard)
   @Post('invites/bulk/commit')
-  commitBulkInvites(@Body() dto: BulkInviteDto) {
-    return this.onboarding.commitBulkTenantInvites(dto);
+  commitBulkInvites(@Body() dto: BulkInviteDto, @Req() req: any) {
+    return this.onboarding.commitBulkTenantInvites(dto, req?.authUserId);
   }
 }
