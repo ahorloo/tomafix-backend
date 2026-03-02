@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Headers, Post } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Post, Req, UseGuards } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { SendLoginOtpDto } from './dto/send-login-otp.dto';
 import { VerifyLoginOtpDto } from './dto/verify-login-otp.dto';
+import { AuthGuard } from './auth.guard';
 
 @Controller('auth')
 export class AuthController {
@@ -28,5 +29,11 @@ export class AuthController {
     const payload = this.auth.verifyBearerToken(authorization);
     const me = await this.auth.me(payload.uid);
     return { memberships: me.memberships };
+  }
+
+  @UseGuards(AuthGuard)
+  @Post('sessions/revoke-all')
+  revokeAll(@Req() req: any) {
+    return this.auth.revokeAllSessions(req.authUserId);
   }
 }

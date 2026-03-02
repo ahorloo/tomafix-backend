@@ -5,13 +5,14 @@ import { AuthService } from './auth.service';
 export class AuthGuard implements CanActivate {
   constructor(private readonly auth: AuthService) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest();
 
     const authHeader = req.headers?.authorization;
     if (!authHeader) return false;
 
     const payload = this.auth.verifyBearerToken(authHeader);
+    await this.auth.assertTokenNotRevoked(payload.uid, payload.iat);
     req.authUserId = payload.uid;
     return true;
   }

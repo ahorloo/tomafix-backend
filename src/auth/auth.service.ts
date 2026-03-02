@@ -12,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 type TokenPayload = {
   uid: string;
   exp: number;
+  iat: number;
 };
 
 @Injectable()
@@ -113,7 +114,8 @@ export class AuthService {
 
     const memberships = await this.getMembershipsForUser(user.id);
 
-    const token = this.signToken({ uid: user.id, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 });
+    const nowSec = Math.floor(Date.now() / 1000);
+    const token = this.signToken({ uid: user.id, iat: nowSec, exp: nowSec + 60 * 60 * 24 * 7 });
 
     return {
       ok: true,
@@ -138,7 +140,8 @@ export class AuthService {
         ? preferredWorkspaceId
         : memberships[0]?.workspaceId ?? null;
 
-    const token = this.signToken({ uid: user.id, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 });
+    const nowSec = Math.floor(Date.now() / 1000);
+    const token = this.signToken({ uid: user.id, iat: nowSec, exp: nowSec + 60 * 60 * 24 * 7 });
 
     return {
       ok: true,
@@ -298,10 +301,32 @@ export class AuthService {
       throw new UnauthorizedException('Invalid token payload');
     }
 
-    if (!payload?.uid || !payload?.exp) throw new UnauthorizedException('Invalid token payload');
+    if (!payload?.uid || !payload?.exp || !payload?.iat) throw new UnauthorizedException('Invalid token payload');
     if (payload.exp < Math.floor(Date.now() / 1000)) throw new UnauthorizedException('Token expired');
 
     return payload;
+  }
+
+  async revokeAllSessions(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException('User not found');
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { fullName: user.fullName ?? null },
+    });
+
+    return { ok: true, revokedAt: new Date().toISOString() };
+  }
+
+  async assertTokenNotRevoked(userId: string, tokenIat: number) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { updatedAt: true } });
+    if (!user) throw new UnauthorizedException('User not found');
+
+    const updatedAtSec = Math.floor(user.updatedAt.getTime() / 1000);
+    if (updatedAtSec > tokenIat + 1) {
+      throw new UnauthorizedException('Session revoked. Please log in again.');
+    }
   }
 
   private makeOtp(): string {

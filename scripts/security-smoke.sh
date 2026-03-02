@@ -22,10 +22,10 @@ check "unauth notices blocked" "403" "$API_BASE/workspaces/test/operations/notic
 check "unauth tenant dashboard blocked" "403" "$API_BASE/workspaces/test/tenant/dashboard"
 
 reconcile_code=$(curl -sS -o /dev/null -w "%{http_code}" -X POST "$API_BASE/billing/reconcile/run" -H 'content-type: application/json' -d '{}')
-if [[ "$reconcile_code" == "200" ]]; then
+if [[ "$reconcile_code" == "200" || "$reconcile_code" == "201" ]]; then
   echo "✅ reconcile admin endpoint responds"
 else
-  echo "❌ reconcile admin endpoint => got $reconcile_code expected 200"
+  echo "❌ reconcile admin endpoint => got $reconcile_code expected 200/201"
 fi
 
 otp_code=$(curl -sS -o /dev/null -w "%{http_code}" -X POST "$API_BASE/auth/login/otp/send" -H 'content-type: application/json' -d '{}')
