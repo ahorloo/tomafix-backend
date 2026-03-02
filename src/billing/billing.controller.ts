@@ -102,6 +102,15 @@ export class BillingController {
     return this.billing.reconcileWorkspaceBilling(workspaceId);
   }
 
+  @Post('reconcile/run')
+  runReconcile(@Headers('x-billing-admin-key') adminKey?: string, @Body() body?: { limit?: number }) {
+    const expected = process.env.BILLING_ADMIN_KEY || '';
+    if (!expected || adminKey !== expected) {
+      return { ok: false, message: 'Unauthorized reconcile trigger' };
+    }
+    return this.billing.reconcileAllWorkspaces(body?.limit ?? 200);
+  }
+
   @Get('health')
   health() {
     return this.billing.health();

@@ -789,6 +789,36 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  async reconcileAllWorkspaces(limit = 200) {
+    const rows = await this.prisma.workspace.findMany({
+      select: { id: true },
+      orderBy: { createdAt: 'desc' },
+      take: Math.max(1, Math.min(limit, 2000)),
+    });
+
+    let ok = 0;
+    let failed = 0;
+    const failures: Array<{ workspaceId: string; error: string }> = [];
+
+    for (const row of rows) {
+      try {
+        await this.reconcileWorkspaceBilling(row.id);
+        ok += 1;
+      } catch (e: any) {
+        failed += 1;
+        failures.push({ workspaceId: row.id, error: e?.message || 'Unknown error' });
+      }
+    }
+
+    return {
+      ok: true,
+      scanned: rows.length,
+      reconciled: ok,
+      failed,
+      failures: failures.slice(0, 20),
+    };
+  }
+
   async replayFailedWebhook(eventId: string) {
     const evt = await this.prisma.webhookEvent.findUnique({ where: { eventId } });
     if (!evt) throw new NotFoundException('Webhook event not found');
