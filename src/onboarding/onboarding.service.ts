@@ -127,6 +127,56 @@ export class OnboardingService {
     return { ok: true, inviteUrl, expiresAt, status: 'SENT' };
   }
 
+  async listTenantInvites(workspaceId: string) {
+    const wsId = String(workspaceId || '').trim();
+    if (!wsId) throw new BadRequestException('workspaceId is required');
+
+    const invites = await this.prisma.invite.findMany({
+      where: { workspaceId: wsId, role: MemberRole.RESIDENT },
+      orderBy: { createdAt: 'desc' },
+      take: 300,
+    });
+
+    return invites.map((i) => ({
+      id: i.id,
+      email: i.email,
+      role: i.role,
+      createdAt: i.createdAt,
+      expiresAt: i.expiresAt,
+      acceptedAt: i.acceptedAt,
+      status: i.acceptedAt ? 'ACCEPTED' : i.expiresAt <= new Date() ? 'EXPIRED' : 'SENT',
+    }));
+  }
+
+  async resendTenantInvite(input: { workspaceId: string; inviteId: string; residentName?: string }) {
+    const workspaceId = String(input.workspaceId || '').trim();
+    const inviteId = String(input.inviteId || '').trim();
+    if (!workspaceId || !inviteId) throw new BadRequestException('workspaceId and inviteId are required');
+
+    const invite = await this.prisma.invite.findFirst({ where: { id: inviteId, workspaceId } });
+    if (!invite || !invite.email) throw new BadRequestException('Invite not found');
+    if (invite.acceptedAt) throw new BadRequestException('Invite already accepted');
+
+    return this.createTenantInvite({
+      workspaceId,
+      email: invite.email,
+      residentName: input.residentName,
+    });
+  }
+
+  async revokeTenantInvite(input: { workspaceId: string; inviteId: string }) {
+    const workspaceId = String(input.workspaceId || '').trim();
+    const inviteId = String(input.inviteId || '').trim();
+    if (!workspaceId || !inviteId) throw new BadRequestException('workspaceId and inviteId are required');
+
+    const invite = await this.prisma.invite.findFirst({ where: { id: inviteId, workspaceId } });
+    if (!invite) throw new BadRequestException('Invite not found');
+    if (invite.acceptedAt) throw new BadRequestException('Accepted invite cannot be revoked');
+
+    await this.prisma.invite.update({ where: { id: inviteId }, data: { expiresAt: new Date() } });
+    return { ok: true, inviteId, status: 'REVOKED' };
+  }
+
   async acceptTenantInvite(input: { token: string; email: string; fullName?: string }) {
     const token = String(input.token || '').trim();
     const providedEmail = String(input.email || '').trim().toLowerCase();

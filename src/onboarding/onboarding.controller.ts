@@ -1,4 +1,4 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { OnboardingService } from './onboarding.service';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 
@@ -39,6 +39,17 @@ type BulkInviteDto = {
   rows: BulkInviteRowDto[];
 };
 
+type ResendInviteDto = {
+  workspaceId: string;
+  inviteId: string;
+  residentName?: string;
+};
+
+type RevokeInviteDto = {
+  workspaceId: string;
+  inviteId: string;
+};
+
 @Controller('onboarding')
 export class OnboardingController {
   constructor(private readonly onboarding: OnboardingService) {}
@@ -60,9 +71,24 @@ export class OnboardingController {
     return this.onboarding.verifyOtpEmail(dto);
   }
 
+  @Get('invites')
+  listInvites(@Query('workspaceId') workspaceId: string) {
+    return this.onboarding.listTenantInvites(workspaceId);
+  }
+
   @Post('invites/create')
   createInvite(@Body() dto: CreateInviteDto) {
     return this.onboarding.createTenantInvite(dto);
+  }
+
+  @Post('invites/resend')
+  resendInvite(@Body() dto: ResendInviteDto) {
+    return this.onboarding.resendTenantInvite(dto);
+  }
+
+  @Post('invites/revoke')
+  revokeInvite(@Body() dto: RevokeInviteDto) {
+    return this.onboarding.revokeTenantInvite(dto);
   }
 
   @Post('invites/accept')
