@@ -311,8 +311,11 @@ export class AuthService {
       throw new UnauthorizedException('Invalid token payload');
     }
 
-    if (!payload?.uid || !payload?.exp || !payload?.iat) throw new UnauthorizedException('Invalid token payload');
+    if (!payload?.uid || !payload?.exp) throw new UnauthorizedException('Invalid token payload');
     if (payload.exp < Math.floor(Date.now() / 1000)) throw new UnauthorizedException('Token expired');
+
+    // Backward compatibility for older tokens minted before iat field rollout.
+    if (!payload.iat) payload.iat = payload.exp - 60 * 60 * 24 * 7;
 
     return payload;
   }
