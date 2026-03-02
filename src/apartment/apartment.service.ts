@@ -358,13 +358,23 @@ export class ApartmentService {
     if (!resident) throw new NotFoundException('Resident not found');
 
     const requestCount = await this.prisma.request.count({ where: { workspaceId, residentId } });
+
+    // Keep request history intact: archive resident instead of hard delete.
     if (requestCount > 0) {
-      throw new BadRequestException('Cannot delete resident: request history exists for this resident');
+      const archived = await this.prisma.resident.update({
+        where: { id: residentId },
+        data: {
+          status: ResidentStatus.INACTIVE,
+          unitId: null,
+        },
+      });
+      if (resident.unitId) await this.syncUnitOccupancy(workspaceId, resident.unitId);
+      return { ok: true, mode: 'archived', resident: archived };
     }
 
     await this.prisma.resident.delete({ where: { id: residentId } });
     if (resident.unitId) await this.syncUnitOccupancy(workspaceId, resident.unitId);
-    return { ok: true };
+    return { ok: true, mode: 'deleted' };
   }
 
   async listRequests(workspaceId: string, status?: string, actorUserId?: string) {
