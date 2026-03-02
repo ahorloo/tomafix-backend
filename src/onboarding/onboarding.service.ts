@@ -78,6 +78,17 @@ export class OnboardingService {
     const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
     if (!ws) throw new BadRequestException('Workspace not found');
 
+    const sentLastHour = await this.prisma.invite.count({
+      where: {
+        workspaceId,
+        role: MemberRole.RESIDENT,
+        createdAt: { gt: new Date(Date.now() - 60 * 60 * 1000) },
+      },
+    });
+    if (sentLastHour >= 250) {
+      throw new HttpException('Invite rate limit reached for this workspace. Try again shortly.', HttpStatus.TOO_MANY_REQUESTS);
+    }
+
     // Invalidate older open invites for same workspace/email to avoid confusion at scale.
     await this.prisma.invite.updateMany({
       where: {
@@ -307,6 +318,19 @@ export class OnboardingService {
     }
 
     const ownerUserId = workspace.ownerUserId as string;
+
+    const attemptsLastHour = await this.prisma.otpCode.count({
+      where: {
+        workspaceId: wsId,
+        userId: ownerUserId,
+        purpose: OtpPurpose.OWNER_VERIFY,
+        channel: OtpChannel.EMAIL,
+        createdAt: { gt: new Date(Date.now() - 60 * 60 * 1000) },
+      },
+    });
+    if (attemptsLastHour >= 8) {
+      throw new HttpException('Too many OTP requests. Please wait and try again.', HttpStatus.TOO_MANY_REQUESTS);
+    }
 
     const ownerEmail = workspace.owner?.email?.toLowerCase();
     if (!ownerEmail || ownerEmail !== target) {
