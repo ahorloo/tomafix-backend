@@ -49,16 +49,12 @@ const baseByRole: Record<MemberRole, PermissionKey[]> = {
   MANAGER: [
     'dashboard:view',
     'units:view',
-    'units:manage',
     'residents:view',
-    'residents:manage',
     'requests:view',
     'requests:create',
     'notices:view',
-    'notices:manage',
     'inspections:view',
     'inspections:manage',
-    'users:manage',
   ],
   STAFF: [
     'dashboard:view',

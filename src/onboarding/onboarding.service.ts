@@ -78,7 +78,7 @@ export class OnboardingService {
         workspaceId,
         userId: actorUserId,
         isActive: true,
-        role: { in: [MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF] },
+        role: { in: [MemberRole.OWNER_ADMIN, MemberRole.STAFF] },
       },
     });
     if (!m) throw new ForbiddenException('Forbidden resource');

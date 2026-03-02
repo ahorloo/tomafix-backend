@@ -189,10 +189,13 @@ export class AuthService {
   async updateWorkspaceMember(workspaceId: string, memberId: string, dto: { role?: MemberRole; isActive?: boolean }) {
     const row = await this.prisma.workspaceMember.findFirst({ where: { id: memberId, workspaceId } });
     if (!row) throw new BadRequestException('Member not found in this workspace');
+
+    const normalizedRole = dto.role === MemberRole.MANAGER ? MemberRole.STAFF : dto.role;
+
     return this.prisma.workspaceMember.update({
       where: { id: memberId },
       data: {
-        role: dto.role ?? undefined,
+        role: normalizedRole ?? undefined,
         isActive: dto.isActive ?? undefined,
       },
       include: { user: { select: { id: true, email: true, fullName: true } } },
