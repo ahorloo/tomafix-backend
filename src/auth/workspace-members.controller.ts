@@ -25,4 +25,5 @@ export class WorkspaceMembersController {
   ) {
     return this.auth.updateWorkspaceMember(workspaceId, memberId, dto);
   }
+
 }
