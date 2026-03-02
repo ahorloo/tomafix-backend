@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
+import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 
 function parseCorsOrigins(): string[] {
@@ -44,6 +45,10 @@ async function bootstrap() {
       crossOriginEmbedderPolicy: false,
     }),
   );
+
+  // Allow image data URLs and richer payloads for request attachments.
+  app.use(json({ limit: '6mb' }));
+  app.use(urlencoded({ extended: true, limit: '6mb' }));
 
   // ✅ Strict request validation (good for API safety)
   app.useGlobalPipes(
