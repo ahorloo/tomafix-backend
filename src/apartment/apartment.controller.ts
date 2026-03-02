@@ -36,8 +36,8 @@ export class ApartmentController {
   // Units
   @WorkspacePermission('units:view')
   @Get('units')
-  listUnits(@Param('workspaceId') workspaceId: string) {
-    return this.apartment.listUnits(workspaceId);
+  listUnits(@Param('workspaceId') workspaceId: string, @Req() req: any) {
+    return this.apartment.listUnits(workspaceId, req.authUserId);
   }
 
   @WorkspacePermission('units:manage')
@@ -66,8 +66,8 @@ export class ApartmentController {
   // Residents
   @WorkspacePermission('residents:view')
   @Get('residents')
-  listResidents(@Param('workspaceId') workspaceId: string) {
-    return this.apartment.listResidents(workspaceId);
+  listResidents(@Param('workspaceId') workspaceId: string, @Req() req: any) {
+    return this.apartment.listResidents(workspaceId, req.authUserId);
   }
 
   @WorkspacePermission('residents:manage')
@@ -97,15 +97,15 @@ export class ApartmentController {
   @WorkspacePermission('requests:view')
   @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF, MemberRole.TECHNICIAN)
   @Get('requests')
-  listRequests(@Param('workspaceId') workspaceId: string, @Query('status') status?: string) {
-    return this.apartment.listRequests(workspaceId, status);
+  listRequests(@Param('workspaceId') workspaceId: string, @Req() req: any, @Query('status') status?: string) {
+    return this.apartment.listRequests(workspaceId, status, req.authUserId);
   }
 
   @WorkspacePermission('requests:create')
   @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF, MemberRole.TECHNICIAN)
   @Post('requests')
-  createRequest(@Param('workspaceId') workspaceId: string, @Body() dto: CreateRequestDto) {
-    return this.apartment.createRequest(workspaceId, dto);
+  createRequest(@Param('workspaceId') workspaceId: string, @Req() req: any, @Body() dto: CreateRequestDto) {
+    return this.apartment.createRequest(workspaceId, dto, req.authUserId);
   }
 
   @WorkspacePermission('requests:create')

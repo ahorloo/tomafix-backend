@@ -225,6 +225,51 @@ export class AuthService {
     return { ok: true };
   }
 
+  async listStaffBlocks(workspaceId: string, staffUserId: string) {
+    return this.prisma.staffBlockAssignment.findMany({
+      where: { workspaceId, staffUserId },
+      orderBy: { block: 'asc' },
+      select: { id: true, block: true, createdAt: true },
+    });
+  }
+
+  async setStaffBlocks(workspaceId: string, staffUserId: string, blocks: string[]) {
+    const member = await this.prisma.workspaceMember.findFirst({
+      where: { workspaceId, userId: staffUserId, isActive: true },
+    });
+    if (!member) throw new BadRequestException('Staff member not found in workspace');
+    if (!(member.role === MemberRole.STAFF || member.role === MemberRole.MANAGER)) {
+      throw new BadRequestException('Only staff can be assigned to blocks');
+    }
+
+    const normalized = Array.from(
+      new Set(
+        (blocks || [])
+          .map((b) => String(b || '').trim())
+          .filter(Boolean),
+      ),
+    );
+
+    await this.prisma.staffBlockAssignment.deleteMany({ where: { workspaceId, staffUserId } });
+    if (normalized.length) {
+      await this.prisma.staffBlockAssignment.createMany({
+        data: normalized.map((block) => ({ workspaceId, staffUserId, block })),
+        skipDuplicates: true,
+      });
+    }
+
+    await this.prisma.auditLog.create({
+      data: {
+        workspaceId,
+        actorUserId: null,
+        action: 'staff.blocks_updated',
+        meta: { staffUserId, blocks: normalized },
+      },
+    });
+
+    return this.listStaffBlocks(workspaceId, staffUserId);
+  }
+
   async listWorkspaceAuditLogs(workspaceId: string, limit = 100) {
     const take = Math.max(1, Math.min(limit, 500));
     return this.prisma.auditLog.findMany({

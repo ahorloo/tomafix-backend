@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import {
   Prisma,
+  MemberRole,
   RequestPriority,
   RequestStatus,
   ResidentRole,
@@ -116,10 +117,33 @@ export class ApartmentService {
     };
   }
 
-  async listUnits(workspaceId: string) {
+  private async getStaffBlockScope(workspaceId: string, actorUserId?: string) {
+    if (!actorUserId) return null;
+
+    const member = await this.prisma.workspaceMember.findFirst({
+      where: { workspaceId, userId: actorUserId, isActive: true },
+      select: { role: true },
+    });
+    if (!member) return null;
+    if (member.role !== MemberRole.STAFF) return null;
+
+    const blocks = await this.prisma.staffBlockAssignment.findMany({
+      where: { workspaceId, staffUserId: actorUserId },
+      select: { block: true },
+    });
+
+    const normalized = blocks.map((b) => b.block).filter(Boolean);
+    return normalized;
+  }
+
+  async listUnits(workspaceId: string, actorUserId?: string) {
     await this.assertApartmentWorkspace(workspaceId);
+    const staffBlocks = await this.getStaffBlockScope(workspaceId, actorUserId);
     return this.prisma.unit.findMany({
-      where: { workspaceId },
+      where: {
+        workspaceId,
+        ...(staffBlocks ? { block: { in: staffBlocks } } : {}),
+      },
       orderBy: [{ block: 'asc' }, { floor: 'asc' }, { label: 'asc' }],
     });
   }
@@ -202,10 +226,14 @@ export class ApartmentService {
     return { ok: true };
   }
 
-  async listResidents(workspaceId: string) {
+  async listResidents(workspaceId: string, actorUserId?: string) {
     await this.assertApartmentWorkspace(workspaceId);
+    const staffBlocks = await this.getStaffBlockScope(workspaceId, actorUserId);
     return this.prisma.resident.findMany({
-      where: { workspaceId },
+      where: {
+        workspaceId,
+        ...(staffBlocks ? { unit: { block: { in: staffBlocks } } } : {}),
+      },
       orderBy: [{ fullName: 'asc' }],
       include: { unit: { select: { id: true, label: true, block: true, floor: true } } },
     });
@@ -339,10 +367,12 @@ export class ApartmentService {
     return { ok: true };
   }
 
-  async listRequests(workspaceId: string, status?: string) {
+  async listRequests(workspaceId: string, status?: string, actorUserId?: string) {
     await this.assertApartmentWorkspace(workspaceId);
 
     const where: any = { workspaceId };
+    const staffBlocks = await this.getStaffBlockScope(workspaceId, actorUserId);
+    if (staffBlocks) where.unit = { block: { in: staffBlocks } };
     if (status) where.status = status as RequestStatus;
 
     return this.prisma.request.findMany({
@@ -355,11 +385,16 @@ export class ApartmentService {
     });
   }
 
-  async createRequest(workspaceId: string, dto: CreateRequestDto) {
+  async createRequest(workspaceId: string, dto: CreateRequestDto, actorUserId?: string) {
     await this.assertApartmentWorkspace(workspaceId);
 
     const unit = await this.prisma.unit.findFirst({ where: { id: dto.unitId, workspaceId } });
     if (!unit) throw new BadRequestException('unitId does not belong to this workspace');
+
+    const staffBlocks = await this.getStaffBlockScope(workspaceId, actorUserId);
+    if (staffBlocks && !staffBlocks.includes(unit.block || '')) {
+      throw new ForbiddenException('You can only create requests for your assigned blocks');
+    }
 
     let resident: { id: string; fullName: string; email: string | null } | null = null;
     if (dto.residentId) {

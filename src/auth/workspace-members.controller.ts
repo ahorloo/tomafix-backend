@@ -17,6 +17,22 @@ export class WorkspaceMembersController {
   }
 
   @WorkspacePermission('users:manage')
+  @Get(':memberId/blocks')
+  blocks(@Param('workspaceId') workspaceId: string, @Param('memberId') memberId: string) {
+    return this.auth.listStaffBlocks(workspaceId, memberId);
+  }
+
+  @WorkspacePermission('users:manage')
+  @Patch(':memberId/blocks')
+  setBlocks(
+    @Param('workspaceId') workspaceId: string,
+    @Param('memberId') memberId: string,
+    @Body() dto: { blocks?: string[] },
+  ) {
+    return this.auth.setStaffBlocks(workspaceId, memberId, dto.blocks || []);
+  }
+
+  @WorkspacePermission('users:manage')
   @Patch(':memberId')
   update(
     @Param('workspaceId') workspaceId: string,
