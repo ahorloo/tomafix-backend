@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { RequestPriority, RequestStatus } from '@prisma/client';
+import { RequestPriority, RequestStatus, ResidentStatus } from '@prisma/client';
 
 @Injectable()
 export class TenantService {
@@ -37,7 +37,11 @@ export class TenantService {
     if (!user?.email) throw new UnauthorizedException('Tenant user email missing');
 
     const resident = await this.prisma.resident.findFirst({
-      where: { workspaceId, email: user.email.toLowerCase() },
+      where: {
+        workspaceId,
+        email: { equals: user.email.trim(), mode: 'insensitive' },
+        status: ResidentStatus.ACTIVE,
+      },
       include: { unit: { select: { id: true, label: true, block: true, floor: true } } },
     });
     if (!resident) throw new NotFoundException('No resident profile found for this tenant in workspace');

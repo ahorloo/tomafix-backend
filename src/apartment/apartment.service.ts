@@ -288,7 +288,7 @@ export class ApartmentService {
         unitId: dto.unitId ?? null,
         fullName: dto.fullName.trim(),
         phone: dto.phone?.trim() || null,
-        email: dto.email?.trim() || null,
+        email: dto.email?.trim().toLowerCase() || null,
         role: dto.role ?? ResidentRole.TENANT,
         status: dto.status ?? ResidentStatus.ACTIVE,
       },
@@ -345,7 +345,7 @@ export class ApartmentService {
       where: { id: residentId },
       data: {
         fullName: dto.fullName !== undefined ? dto.fullName.trim() : undefined,
-        email: dto.email !== undefined ? (dto.email?.trim() || null) : undefined,
+        email: dto.email !== undefined ? (dto.email?.trim().toLowerCase() || null) : undefined,
         phone: dto.phone !== undefined ? (dto.phone?.trim() || null) : undefined,
         unitId: dto.unitId !== undefined ? (dto.unitId || null) : undefined,
         role: dto.role !== undefined ? dto.role : undefined,
