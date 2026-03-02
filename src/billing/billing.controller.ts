@@ -95,6 +95,13 @@ export class BillingController {
     return this.billing.replayFailedWebhook(eventId);
   }
 
+  @UseGuards(AuthGuard, WorkspaceAccessGuard)
+  @WorkspacePermission('users:manage')
+  @Post('workspaces/:workspaceId/reconcile')
+  reconcileWorkspace(@Param('workspaceId') workspaceId: string) {
+    return this.billing.reconcileWorkspaceBilling(workspaceId);
+  }
+
   @Get('health')
   health() {
     return this.billing.health();

@@ -3,6 +3,7 @@ import {
   BillingProvider,
   BillingStatus,
   PaymentStatus,
+  PlanInterval,
   SubscriptionStatus,
   WorkspaceStatus,
 } from '@prisma/client';
@@ -715,6 +716,77 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
     });
 
     return events.filter((e: any) => (e?.payload?.meta?.processed === false));
+  }
+
+  async reconcileWorkspaceBilling(workspaceId: string) {
+    const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
+    if (!ws) throw new NotFoundException('Workspace not found');
+
+    const [latestPayment, latestSub] = await Promise.all([
+      this.prisma.payment.findFirst({
+        where: { workspaceId },
+        orderBy: [{ paidAt: 'desc' }, { createdAt: 'desc' }],
+      }),
+      this.prisma.subscription.findFirst({
+        where: { workspaceId },
+        orderBy: { createdAt: 'desc' },
+        include: { plan: true },
+      }),
+    ]);
+
+    let billingStatus = ws.billingStatus;
+    let workspaceStatus = ws.status;
+    let nextRenewal = ws.nextRenewal;
+    let planName = ws.planName;
+
+    if (latestSub?.plan?.name) planName = latestSub.plan.name;
+    if (latestSub?.currentPeriodEnd) nextRenewal = latestSub.currentPeriodEnd;
+
+    if (latestPayment?.status === PaymentStatus.PAID) {
+      billingStatus = BillingStatus.ACTIVE;
+      workspaceStatus = WorkspaceStatus.ACTIVE;
+      if (!nextRenewal) {
+        const days = latestSub?.plan?.interval === PlanInterval.YEARLY ? 365 : 30;
+        nextRenewal = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+      }
+    } else if (latestPayment?.status === PaymentStatus.PENDING) {
+      if (billingStatus === BillingStatus.ACTIVE) billingStatus = BillingStatus.PAST_DUE;
+      if (workspaceStatus === WorkspaceStatus.ACTIVE) workspaceStatus = WorkspaceStatus.PENDING_PAYMENT;
+    }
+
+    if (nextRenewal && nextRenewal.getTime() <= Date.now()) {
+      billingStatus = billingStatus === BillingStatus.CANCELLED ? BillingStatus.CANCELLED : BillingStatus.PAST_DUE;
+      workspaceStatus = WorkspaceStatus.PENDING_PAYMENT;
+    }
+
+    const updated = await this.prisma.workspace.update({
+      where: { id: workspaceId },
+      data: {
+        billingStatus,
+        status: workspaceStatus,
+        nextRenewal,
+        planName,
+      },
+      select: { id: true, status: true, billingStatus: true, nextRenewal: true, planName: true },
+    });
+
+    return {
+      ok: true,
+      workspaceId,
+      before: {
+        status: ws.status,
+        billingStatus: ws.billingStatus,
+        nextRenewal: ws.nextRenewal,
+        planName: ws.planName,
+      },
+      after: updated,
+      latestPayment: latestPayment
+        ? { reference: latestPayment.reference, status: latestPayment.status, paidAt: latestPayment.paidAt }
+        : null,
+      latestSubscription: latestSub
+        ? { id: latestSub.id, status: latestSub.status, planName: latestSub.plan?.name, currentPeriodEnd: latestSub.currentPeriodEnd }
+        : null,
+    };
   }
 
   async replayFailedWebhook(eventId: string) {
