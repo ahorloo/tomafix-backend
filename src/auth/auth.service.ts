@@ -219,6 +219,23 @@ export class AuthService {
       },
     });
 
+    try {
+      const appUrl = (process.env.APP_BASE_URL || process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/+$/, '');
+      await this.sendEmailWithResend({
+        to: email,
+        subject: `You've been added as staff on TomaFix`,
+        html: `
+          <p>Hi ${fullName || 'there'},</p>
+          <p>You have been added as a <strong>Staff</strong> member for <strong>${ws.name}</strong> on TomaFix.</p>
+          <p>Use this email to sign in and verify with OTP:</p>
+          <p><a href="${appUrl}/login" target="_blank" rel="noreferrer">Go to login</a></p>
+          <p>If this wasn’t expected, ignore this email.</p>
+        `,
+      });
+    } catch (e: any) {
+      this.logger.warn(`Staff invite email failed (${email}): ${e?.message || e}`);
+    }
+
     return member;
   }
 
