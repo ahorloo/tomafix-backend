@@ -377,6 +377,7 @@ export class ApartmentService {
         residentId: dto.residentId ?? null,
         title: dto.title.trim(),
         description: dto.description?.trim() || null,
+        photoUrl: dto.photoUrl?.trim() || null,
         priority: dto.priority ?? RequestPriority.NORMAL,
         status: dto.status ?? RequestStatus.PENDING,
       },

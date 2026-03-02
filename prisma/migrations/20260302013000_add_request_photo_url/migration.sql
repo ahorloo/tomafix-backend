@@ -1,0 +1,2 @@
+ALTER TABLE "Request"
+ADD COLUMN IF NOT EXISTS "photoUrl" TEXT;

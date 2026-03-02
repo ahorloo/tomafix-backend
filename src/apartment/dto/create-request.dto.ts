@@ -19,6 +19,10 @@ export class CreateRequestDto {
   description?: string;
 
   @IsOptional()
+  @IsString()
+  photoUrl?: string;
+
+  @IsOptional()
   @IsEnum(RequestPriority)
   priority?: RequestPriority;
 

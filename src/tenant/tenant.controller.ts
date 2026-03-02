@@ -29,7 +29,7 @@ export class TenantController {
   createRequest(
     @Param('workspaceId') workspaceId: string,
     @Req() req: any,
-    @Body() dto: { title: string; description?: string; priority?: RequestPriority },
+    @Body() dto: { title: string; description?: string; priority?: RequestPriority; photoUrl?: string },
   ) {
     return this.tenant.createMyRequest(workspaceId, req.authUserId, dto);
   }

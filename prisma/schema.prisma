@@ -391,6 +391,7 @@ model Request {
 
   title       String
   description String?
+  photoUrl    String?
   priority    RequestPriority @default(NORMAL)
   status      RequestStatus   @default(PENDING)
 

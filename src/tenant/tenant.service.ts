@@ -93,7 +93,11 @@ export class TenantService {
     });
   }
 
-  async createMyRequest(workspaceId: string, userId: string, dto: { title: string; description?: string; priority?: RequestPriority }) {
+  async createMyRequest(
+    workspaceId: string,
+    userId: string,
+    dto: { title: string; description?: string; priority?: RequestPriority; photoUrl?: string },
+  ) {
     const { resident } = await this.getResidentContext(workspaceId, userId);
     if (!resident.unitId) throw new BadRequestException('Resident has no assigned unit');
 
@@ -104,6 +108,7 @@ export class TenantService {
         residentId: resident.id,
         title: dto.title.trim(),
         description: dto.description?.trim() || null,
+        photoUrl: dto.photoUrl?.trim() || null,
         priority: dto.priority || RequestPriority.NORMAL,
       },
       include: { unit: { select: { id: true, label: true } } },
