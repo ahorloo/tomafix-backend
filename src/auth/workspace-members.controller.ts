@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { MemberRole } from '@prisma/client';
 import { AuthService } from './auth.service';
 import { AuthGuard } from './auth.guard';
@@ -14,6 +14,15 @@ export class WorkspaceMembersController {
   @Get()
   list(@Param('workspaceId') workspaceId: string) {
     return this.auth.listWorkspaceMembers(workspaceId);
+  }
+
+  @WorkspacePermission('users:manage')
+  @Post('staff')
+  createStaff(
+    @Param('workspaceId') workspaceId: string,
+    @Body() dto: { fullName: string; email: string },
+  ) {
+    return this.auth.createWorkspaceStaff(workspaceId, dto);
   }
 
   @WorkspacePermission('users:manage')

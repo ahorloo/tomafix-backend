@@ -186,6 +186,42 @@ export class AuthService {
     });
   }
 
+  async createWorkspaceStaff(workspaceId: string, dto: { fullName: string; email: string }) {
+    const fullName = String(dto.fullName || '').trim();
+    const email = String(dto.email || '').trim().toLowerCase();
+    if (!fullName) throw new BadRequestException('fullName is required');
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new BadRequestException('Valid email is required');
+    }
+
+    const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
+    if (!ws) throw new BadRequestException('Workspace not found');
+
+    const user = await this.prisma.user.upsert({
+      where: { email },
+      update: { fullName },
+      create: { email, fullName },
+    });
+
+    const member = await this.prisma.workspaceMember.upsert({
+      where: { workspaceId_userId: { workspaceId, userId: user.id } },
+      update: { role: MemberRole.STAFF, isActive: true },
+      create: { workspaceId, userId: user.id, role: MemberRole.STAFF, isActive: true },
+      include: { user: { select: { id: true, email: true, fullName: true } } },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        workspaceId,
+        actorUserId: null,
+        action: 'staff.created',
+        meta: { email, fullName, userId: user.id },
+      },
+    });
+
+    return member;
+  }
+
   async updateWorkspaceMember(workspaceId: string, memberId: string, dto: { role?: MemberRole; isActive?: boolean }) {
     const row = await this.prisma.workspaceMember.findFirst({ where: { id: memberId, workspaceId } });
     if (!row) throw new BadRequestException('Member not found in this workspace');
