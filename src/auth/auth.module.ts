@@ -4,10 +4,11 @@ import { AuthController } from './auth.controller';
 import { WorkspaceMembersController } from './workspace-members.controller';
 import { WorkspacePermissionsController } from './workspace-permissions.controller';
 import { AuthService } from './auth.service';
+import { WorkspaceAuditController } from './workspace-audit.controller';
 
 @Module({
   imports: [PrismaModule],
-  controllers: [AuthController, WorkspaceMembersController, WorkspacePermissionsController],
+  controllers: [AuthController, WorkspaceMembersController, WorkspacePermissionsController, WorkspaceAuditController],
   providers: [AuthService],
   exports: [AuthService],
 })

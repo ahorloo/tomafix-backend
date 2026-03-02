@@ -139,6 +139,15 @@ export class OnboardingService {
       html: this.inviteEmailHtml({ inviteUrl, residentName: input.residentName }),
     });
 
+    await this.prisma.auditLog.create({
+      data: {
+        workspaceId,
+        actorUserId: actorUserId || null,
+        action: 'invite.sent',
+        meta: { email, expiresAt },
+      },
+    });
+
     return { ok: true, inviteUrl, expiresAt, status: 'SENT' };
   }
 
@@ -195,6 +204,14 @@ export class OnboardingService {
     if (invite.acceptedAt) throw new BadRequestException('Accepted invite cannot be revoked');
 
     await this.prisma.invite.update({ where: { id: inviteId }, data: { expiresAt: new Date() } });
+    await this.prisma.auditLog.create({
+      data: {
+        workspaceId,
+        actorUserId: actorUserId || null,
+        action: 'invite.revoked',
+        meta: { inviteId, email: invite.email },
+      },
+    });
     return { ok: true, inviteId, status: 'REVOKED' };
   }
 

@@ -222,6 +222,16 @@ export class AuthService {
     return { ok: true };
   }
 
+  async listWorkspaceAuditLogs(workspaceId: string, limit = 100) {
+    const take = Math.max(1, Math.min(limit, 500));
+    return this.prisma.auditLog.findMany({
+      where: { workspaceId },
+      orderBy: { createdAt: 'desc' },
+      take,
+      include: { actor: { select: { id: true, email: true, fullName: true } } },
+    });
+  }
+
   async assertWorkspaceAccess(userId: string, workspaceId: string, allowedRoles?: MemberRole[]) {
     const membership = await this.prisma.workspaceMember.findFirst({
       where: { userId, workspaceId, isActive: true },
@@ -315,6 +325,25 @@ export class AuthService {
       where: { id: userId },
       data: { fullName: user.fullName ?? null },
     });
+
+    const memberships = await this.prisma.workspaceMember.findMany({
+      where: { userId, isActive: true },
+      select: { workspaceId: true },
+      take: 20,
+    });
+
+    await Promise.all(
+      memberships.map((m) =>
+        this.prisma.auditLog.create({
+          data: {
+            workspaceId: m.workspaceId,
+            actorUserId: userId,
+            action: 'security.sessions_revoke_all',
+            meta: { source: 'settings' },
+          },
+        }),
+      ),
+    );
 
     return { ok: true, revokedAt: new Date().toISOString() };
   }
