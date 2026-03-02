@@ -79,17 +79,26 @@ export class ApartmentService {
   async getDashboard(workspaceId: string) {
     await this.assertApartmentWorkspace(workspaceId);
 
-    const [totalUnits, occupiedUnits, vacantUnits, maintenanceUnits] = await Promise.all([
-      this.prisma.unit.count({ where: { workspaceId } }),
-      this.prisma.unit.count({ where: { workspaceId, status: UnitStatus.OCCUPIED } }),
-      this.prisma.unit.count({ where: { workspaceId, status: UnitStatus.VACANT } }),
-      this.prisma.unit.count({ where: { workspaceId, status: UnitStatus.MAINTENANCE } }),
+    const [unitBuckets, requestBuckets] = await Promise.all([
+      this.prisma.unit.groupBy({
+        by: ['status'],
+        where: { workspaceId },
+        _count: { _all: true },
+      }),
+      this.prisma.request.groupBy({
+        by: ['status'],
+        where: { workspaceId, status: { in: [RequestStatus.PENDING, RequestStatus.IN_PROGRESS] } },
+        _count: { _all: true },
+      }),
     ]);
 
-    const [pendingRequests, inProgressRequests] = await Promise.all([
-      this.prisma.request.count({ where: { workspaceId, status: RequestStatus.PENDING } }),
-      this.prisma.request.count({ where: { workspaceId, status: RequestStatus.IN_PROGRESS } }),
-    ]);
+    const totalUnits = unitBuckets.reduce((sum, row) => sum + row._count._all, 0);
+    const occupiedUnits = unitBuckets.find((row) => row.status === UnitStatus.OCCUPIED)?._count._all ?? 0;
+    const vacantUnits = unitBuckets.find((row) => row.status === UnitStatus.VACANT)?._count._all ?? 0;
+    const maintenanceUnits = unitBuckets.find((row) => row.status === UnitStatus.MAINTENANCE)?._count._all ?? 0;
+
+    const pendingRequests = requestBuckets.find((row) => row.status === RequestStatus.PENDING)?._count._all ?? 0;
+    const inProgressRequests = requestBuckets.find((row) => row.status === RequestStatus.IN_PROGRESS)?._count._all ?? 0;
 
     const recentRequests = await this.prisma.request.findMany({
       where: { workspaceId },

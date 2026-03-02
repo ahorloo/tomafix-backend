@@ -191,6 +191,7 @@ model WorkspaceMember {
   @@unique([workspaceId, userId])
   @@index([workspaceId])
   @@index([userId])
+  @@index([workspaceId, isActive, role])
 }
 
 model StaffBlockAssignment {
@@ -373,6 +374,7 @@ model Unit {
   updatedAt DateTime @updatedAt
 
   @@index([workspaceId])
+  @@index([workspaceId, status])
   @@index([workspaceId, block, floor])
 
   // ✅ Prevent duplicate units inside the same workspace by label
@@ -397,6 +399,7 @@ model Resident {
   updatedAt DateTime @updatedAt
 
   @@index([workspaceId])
+  @@index([workspaceId, status])
   @@index([unitId])
 }
 
@@ -421,6 +424,8 @@ model Request {
   updatedAt DateTime @updatedAt
 
   @@index([workspaceId])
+  @@index([workspaceId, status, createdAt])
+  @@index([workspaceId, residentId, createdAt])
   @@index([unitId])
   @@index([residentId])
 }
@@ -439,6 +444,7 @@ model RequestMessage {
 
   @@index([workspaceId])
   @@index([requestId])
+  @@index([workspaceId, requestId, createdAt])
   @@index([createdAt])
 }
 
@@ -468,6 +474,7 @@ model Notice {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId])
+  @@index([workspaceId, audience, createdAt])
   @@index([createdAt])
 }
 
