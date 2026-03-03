@@ -20,7 +20,7 @@ type PlanConfig = {
 
 export const PLAN_MAP: Record<PlanName, PlanConfig> = {
   Starter: {
-    pricePesewas: 9900,
+    pricePesewas: 12900,
     currency: 'GHS',
     limits: { properties: 1, units: 20 },
     features: {
@@ -34,7 +34,7 @@ export const PLAN_MAP: Record<PlanName, PlanConfig> = {
     notes: ['Upgrade anytime'],
   },
   Growth: {
-    pricePesewas: 14900,
+    pricePesewas: 24900,
     currency: 'GHS',
     limits: { properties: 3, units: 120 },
     features: {
@@ -47,7 +47,7 @@ export const PLAN_MAP: Record<PlanName, PlanConfig> = {
     },
   },
   TomaPrime: {
-    pricePesewas: 29900,
+    pricePesewas: 49900,
     currency: 'GHS',
     limits: { properties: 5, units: 250 },
     features: {

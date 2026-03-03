@@ -85,7 +85,7 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
     > = {
       Starter: {
         summary: 'For small apartment buildings',
-        priceText: 'GH₵ 99 / month',
+        priceText: 'GH₵ 129 / month',
         bullets: [
           '1 property',
           'Up to 20 units',
@@ -95,7 +95,7 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       },
       Growth: {
         summary: 'For growing apartments & small managers',
-        priceText: 'GH₵ 149 / month',
+        priceText: 'GH₵ 249 / month',
         bullets: [
           'Up to 3 properties',
           'Up to 120 total units',
@@ -105,7 +105,7 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       },
       TomaPrime: {
         summary: 'For large apartments & premium teams',
-        priceText: 'GH₵ 299 / month',
+        priceText: 'GH₵ 499 / month',
         bullets: [
           'Up to 5 properties',
           'Up to 250 total units',
