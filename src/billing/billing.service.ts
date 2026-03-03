@@ -85,7 +85,7 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
     > = {
       Starter: {
         summary: 'For small apartment buildings',
-        priceText: 'GH₵ 79 / month',
+        priceText: 'GH₵ 99 / month',
         bullets: [
           '1 property',
           'Up to 20 units',

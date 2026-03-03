@@ -20,7 +20,7 @@ type PlanConfig = {
 
 export const PLAN_MAP: Record<PlanName, PlanConfig> = {
   Starter: {
-    pricePesewas: 7900,
+    pricePesewas: 9900,
     currency: 'GHS',
     limits: { properties: 1, units: 20 },
     features: {
