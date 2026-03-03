@@ -8,7 +8,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { createHash, randomBytes, randomInt, scryptSync, timingSafeEqual } from 'crypto';
-import { MemberRole, OtpChannel, OtpPurpose, WorkspaceStatus } from '@prisma/client';
+import { MemberRole, OtpChannel, OtpPurpose, ResidentRole, ResidentStatus, WorkspaceStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
@@ -365,8 +365,8 @@ export class OnboardingService {
           email: row.email,
           phone: row.phone,
           unitId: row.unitId,
-          role: MemberRole.RESIDENT as any,
-          status: 'ACTIVE' as any,
+          role: ResidentRole.TENANT,
+          status: ResidentStatus.ACTIVE,
         },
       });
 
