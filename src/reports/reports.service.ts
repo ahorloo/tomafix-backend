@@ -117,10 +117,10 @@ export class ReportsService {
   async exportInspectionsCsv(workspaceId: string) {
     await this.assertApartmentWorkspace(workspaceId);
     const rows = await this.prisma.inspection.findMany({ where: { workspaceId }, include: { unit: { select: { label: true } } }, orderBy: { createdAt: 'desc' } });
-    const header = ['id', 'title', 'status', 'unit', 'dueDate', 'result', 'createdAt'];
+    const header = ['id', 'title', 'status', 'scope', 'block', 'floor', 'unit', 'dueDate', 'result', 'createdAt'];
     const lines = [header.join(',')];
     rows.forEach((r) => {
-      lines.push([r.id, r.title, r.status, r.unit?.label || '', r.dueDate.toISOString(), r.result || '', r.createdAt.toISOString()].map(csvEscape).join(','));
+      lines.push([r.id, r.title, r.status, r.scope, r.block || '', r.floor || '', r.unit?.label || '', r.dueDate.toISOString(), r.result || '', r.createdAt.toISOString()].map(csvEscape).join(','));
     });
     return lines.join('\n');
   }

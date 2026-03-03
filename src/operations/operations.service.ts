@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { InspectionStatus, NoticeAudience, ResidentStatus, TemplateType } from '@prisma/client';
+import { InspectionScope, InspectionStatus, MemberRole, NoticeAudience, ResidentStatus, TemplateType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -122,34 +122,78 @@ export class OperationsService {
     return { ok: true };
   }
 
-  async listInspections(workspaceId: string) {
+  async listInspections(workspaceId: string, actorUserId?: string) {
     await this.assertWorkspace(workspaceId);
+
+    let where: any = { workspaceId };
+    if (actorUserId) {
+      const member = await this.prisma.workspaceMember.findFirst({
+        where: { workspaceId, userId: actorUserId, isActive: true },
+        select: { role: true },
+      });
+      if (member?.role === MemberRole.STAFF) {
+        const blocks = await this.prisma.staffBlockAssignment.findMany({
+          where: { workspaceId, staffUserId: actorUserId },
+          select: { block: true },
+        });
+        const allowed = blocks.map((b) => b.block).filter(Boolean);
+        if (allowed.length) {
+          where = {
+            ...where,
+            OR: [
+              { block: { in: allowed } },
+              { unit: { block: { in: allowed } } },
+            ],
+          };
+        }
+      }
+    }
+
     return this.prisma.inspection.findMany({
-      where: { workspaceId },
+      where,
       orderBy: { dueDate: 'asc' },
-      include: { unit: { select: { id: true, label: true } } },
+      include: { unit: { select: { id: true, label: true, block: true, floor: true } } },
     });
   }
 
   async createInspection(
     workspaceId: string,
-    dto: { title: string; unitId?: string; dueDate: string; checklist?: string[] },
+    dto: { title: string; scope?: InspectionScope; unitId?: string; block?: string; floor?: string; dueDate: string; checklist?: string[] },
   ) {
     await this.assertWorkspace(workspaceId);
-    if (dto.unitId) {
+
+    const scope = dto.scope || InspectionScope.UNIT;
+    const block = dto.block?.trim() || null;
+    const floor = dto.floor?.trim() || null;
+
+    let unitId: string | null = null;
+    if (scope === InspectionScope.UNIT) {
+      if (!dto.unitId) throw new BadRequestException('unitId is required for UNIT inspections');
       const unit = await this.prisma.unit.findFirst({ where: { id: dto.unitId, workspaceId } });
       if (!unit) throw new BadRequestException('unitId does not belong to this workspace');
+      unitId = unit.id;
+    }
+
+    if (scope === InspectionScope.BLOCK && !block) {
+      throw new BadRequestException('block is required for BLOCK inspections');
+    }
+
+    if (scope === InspectionScope.FLOOR && (!block || !floor)) {
+      throw new BadRequestException('block and floor are required for FLOOR inspections');
     }
 
     return this.prisma.inspection.create({
       data: {
         workspaceId,
         title: dto.title.trim(),
-        unitId: dto.unitId || null,
+        scope,
+        unitId,
+        block,
+        floor,
         dueDate: new Date(dto.dueDate),
         checklist: dto.checklist ?? [],
       },
-      include: { unit: { select: { id: true, label: true } } },
+      include: { unit: { select: { id: true, label: true, block: true, floor: true } } },
     });
   }
 

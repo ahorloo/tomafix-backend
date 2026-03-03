@@ -115,6 +115,12 @@ enum InspectionStatus {
   COMPLETED
 }
 
+enum InspectionScope {
+  UNIT
+  BLOCK
+  FLOOR
+}
+
 model Workspace {
   id           String          @id @default(cuid())
   name         String
@@ -482,6 +488,9 @@ model Inspection {
   id          String           @id @default(cuid())
   workspaceId String
   unitId      String?
+  scope       InspectionScope  @default(UNIT)
+  block       String?
+  floor       String?
   title       String
   dueDate     DateTime
   checklist   Json?
@@ -494,6 +503,7 @@ model Inspection {
   unit      Unit?     @relation(fields: [unitId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId])
+  @@index([workspaceId, scope, block, floor])
   @@index([unitId])
   @@index([dueDate])
 }

@@ -9,7 +9,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { MemberRole, NoticeAudience } from '@prisma/client';
+import { InspectionScope, MemberRole, NoticeAudience } from '@prisma/client';
 import { AuthGuard } from '../auth/auth.guard';
 import { WorkspaceAccessGuard } from '../auth/workspace-access.guard';
 import { WorkspaceRoles } from '../auth/workspace-roles.decorator';
@@ -56,8 +56,8 @@ export class OperationsController {
 
   @WorkspacePermission('inspections:view')
   @Get('inspections')
-  listInspections(@Param('workspaceId') workspaceId: string) {
-    return this.operations.listInspections(workspaceId);
+  listInspections(@Param('workspaceId') workspaceId: string, @Req() req: any) {
+    return this.operations.listInspections(workspaceId, req.authUserId);
   }
 
   @WorkspacePermission('inspections:manage')
@@ -65,7 +65,7 @@ export class OperationsController {
   @Post('inspections')
   createInspection(
     @Param('workspaceId') workspaceId: string,
-    @Body() dto: { title: string; unitId?: string; dueDate: string; checklist?: string[] },
+    @Body() dto: { title: string; scope?: InspectionScope; unitId?: string; block?: string; floor?: string; dueDate: string; checklist?: string[] },
   ) {
     return this.operations.createInspection(workspaceId, dto);
   }
