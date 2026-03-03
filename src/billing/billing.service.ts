@@ -56,10 +56,27 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
   }
 
   async listPlans() {
-    const plans = await this.prisma.plan.findMany({
+    let plans = await this.prisma.plan.findMany({
       where: { isActive: true },
       orderBy: [{ interval: 'asc' }, { amountPesewas: 'asc' }],
     });
+
+    // Auto-bootstrap default plans if DB was reset/emptied.
+    if (!plans.length) {
+      await this.prisma.plan.createMany({
+        data: [
+          { name: 'Starter', interval: PlanInterval.MONTHLY, amountPesewas: 7900, currency: 'GHS', isActive: true },
+          { name: 'Growth', interval: PlanInterval.MONTHLY, amountPesewas: 14900, currency: 'GHS', isActive: true },
+          { name: 'TomaPrime', interval: PlanInterval.MONTHLY, amountPesewas: 29900, currency: 'GHS', isActive: true },
+        ],
+        skipDuplicates: true,
+      });
+
+      plans = await this.prisma.plan.findMany({
+        where: { isActive: true },
+        orderBy: [{ interval: 'asc' }, { amountPesewas: 'asc' }],
+      });
+    }
 
     // Enrich with user-facing copy (kept server-side so frontend stays simple)
     const copy: Record<
@@ -86,7 +103,7 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
           'Staff assignment + basic reports',
         ],
       },
-      'Toma Prime': {
+      TomaPrime: {
         summary: 'For large apartments & premium teams',
         priceText: 'GH₵ 299 / month',
         bullets: [
