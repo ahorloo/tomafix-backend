@@ -2,10 +2,18 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { RequestPriority, RequestStatus, TemplateType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
-function parseDate(value?: string) {
+function parseDate(value?: string, mode: 'start' | 'end' = 'start') {
   if (!value) return undefined;
-  const d = new Date(value);
+  const raw = String(value).trim();
+  const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return undefined;
+
+  // If caller passed date-only (YYYY-MM-DD), normalize to day bounds.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    if (mode === 'start') d.setHours(0, 0, 0, 0);
+    else d.setHours(23, 59, 59, 999);
+  }
+
   return d;
 }
 
@@ -32,8 +40,8 @@ export class ReportsService {
 
   async summary(workspaceId: string, from?: string, to?: string) {
     await this.assertApartmentWorkspace(workspaceId);
-    const fromDate = parseDate(from);
-    const toDate = parseDate(to);
+    const fromDate = parseDate(from, 'start');
+    const toDate = parseDate(to, 'end');
 
     const createdAtFilter = fromDate || toDate
       ? { gte: fromDate ?? undefined, lte: toDate ?? undefined }
