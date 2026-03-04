@@ -13,10 +13,17 @@ export class TenantService {
     const from = process.env.RESEND_FROM || process.env.EMAIL_FROM || 'TomaFix <onboarding@resend.dev>';
     const logoUrl = process.env.EMAIL_LOGO_URL || 'https://www.tomafix.com/bimi-logo-preview.jpg';
     const brandedHtml = `
-      <div style="font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Arial, sans-serif; background:#0c162a; padding:20px;">
-        <div style="max-width:640px; margin:0 auto; background:#111a2d; border:1px solid rgba(255,255,255,0.08); border-radius:14px; padding:20px; color:#e6edf6;">
-          <div style="margin-bottom:14px;"><img src="${logoUrl}" alt="TomaFix" style="max-width:180px; height:auto; border-radius:8px;" /></div>
-          ${args.html}
+      <div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial,sans-serif;background:linear-gradient(180deg,#08101f 0%,#0c162a 100%);padding:24px 14px;">
+        <div style="max-width:640px;margin:0 auto;background:#101a2f;border:1px solid rgba(230,237,246,0.12);border-radius:16px;overflow:hidden;color:#e6edf6;box-shadow:0 10px 30px rgba(0,0,0,0.25);">
+          <div style="padding:16px 18px;border-bottom:1px solid rgba(230,237,246,0.08);background:rgba(56,189,248,0.08);">
+            <img src="${logoUrl}" alt="TomaFix" style="max-width:170px;height:auto;display:block;" />
+          </div>
+          <div style="padding:18px;color:#e6edf6;line-height:1.55;font-size:14px;">
+            ${args.html}
+          </div>
+          <div style="padding:12px 18px;border-top:1px solid rgba(230,237,246,0.08);font-size:11px;color:rgba(230,237,246,0.65);">
+            TomaFix • Property operations made simple
+          </div>
         </div>
       </div>
     `;
