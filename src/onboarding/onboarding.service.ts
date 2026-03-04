@@ -8,7 +8,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { createHash, randomBytes, randomInt, scryptSync, timingSafeEqual } from 'crypto';
-import { MemberRole, OtpChannel, OtpPurpose, ResidentRole, ResidentStatus, WorkspaceStatus } from '@prisma/client';
+import { MemberRole, OtpChannel, OtpPurpose, ResidentRole, ResidentStatus, UnitStatus, WorkspaceStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
@@ -369,6 +369,13 @@ export class OnboardingService {
           status: ResidentStatus.ACTIVE,
         },
       });
+
+      if (row.unitId) {
+        await this.prisma.unit.update({
+          where: { id: row.unitId },
+          data: { status: UnitStatus.OCCUPIED },
+        });
+      }
 
       const invite = await this.createTenantInvite({
         workspaceId: preview.workspaceId,
