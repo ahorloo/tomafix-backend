@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { TemplateType } from '@prisma/client';
 import { cacheGet, cacheSet, cacheBust, cacheStats } from './cache';
 import { getEntitlements, assertPlanExists, PLAN_MAP } from './planConfig';
 import { EntitlementsPayload, PlanName, mapWorkspaceStatusToBillingStatus } from '../types/billing';
@@ -23,7 +24,9 @@ export class BillingDomainService {
 
     const [propertiesUsed, unitsUsed] = await Promise.all([
       this.prisma.property.count({ where: { workspaceId } }),
-      this.prisma.unit.count({ where: { workspaceId } }),
+      ws.templateType === TemplateType.ESTATE
+        ? this.prisma.estateUnit.count({ where: { workspaceId } })
+        : this.prisma.apartmentUnit.count({ where: { workspaceId } }),
     ]);
 
     const plan = getEntitlements(planName);

@@ -7,8 +7,8 @@ import {
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
-import { createHash, randomBytes, randomInt, scryptSync, timingSafeEqual } from 'crypto';
-import { MemberRole, OtpChannel, OtpPurpose, ResidentRole, ResidentStatus, UnitStatus, WorkspaceStatus } from '@prisma/client';
+import { createHash, randomBytes, randomInt, randomUUID, scryptSync, timingSafeEqual } from 'crypto';
+import { MemberRole, OtpChannel, OtpPurpose, ResidentRole, ResidentStatus, TemplateType, UnitStatus, WorkspaceStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
@@ -35,10 +35,31 @@ export class OnboardingService {
       create: { email, fullName: dto.ownerFullName },
     });
 
+    const template = await this.prisma.template.upsert({
+      where: { key: dto.templateType },
+      update: { isActive: true },
+      create: {
+        key: dto.templateType,
+        name:
+          dto.templateType === 'APARTMENT'
+            ? 'Apartment Building'
+            : dto.templateType === 'OFFICE'
+              ? 'Office / Company Facility'
+              : 'Estate / Multi-property',
+        description:
+          dto.templateType === 'APARTMENT'
+            ? 'Owners + tenants, requests, notices, inspections'
+            : dto.templateType === 'OFFICE'
+              ? 'Facilities workflow, assets, inspections'
+              : 'Multi-property admin workflow in one workspace',
+      },
+    });
+
     const workspace = await this.prisma.workspace.create({
       data: {
         name: dto.workspaceName.trim(),
         templateType: dto.templateType,
+        templateId: template.id,
         status: WorkspaceStatus.PENDING_OTP,
         ownerUserId: user.id,
         members: {
@@ -49,7 +70,7 @@ export class OnboardingService {
           },
         },
       },
-      include: { members: true },
+      include: { members: true, template: true },
     });
 
     return {
@@ -277,8 +298,13 @@ export class OnboardingService {
     const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
     if (!ws) throw new BadRequestException('Workspace not found');
 
-    const units = await this.prisma.unit.findMany({ where: { workspaceId }, select: { id: true, label: true, block: true, floor: true } });
-    const residents = await this.prisma.resident.findMany({ where: { workspaceId }, select: { email: true, unitId: true, status: true } });
+    const units = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateUnit.findMany({ where: { workspaceId }, select: { id: true, label: true, block: true, floor: true } })
+      : await this.prisma.apartmentUnit.findMany({ where: { workspaceId }, select: { id: true, label: true, block: true, floor: true } });
+
+    const residents = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateResident.findMany({ where: { workspaceId }, select: { email: true, unitId: true, status: true } })
+      : await this.prisma.apartmentResident.findMany({ where: { workspaceId }, select: { email: true, unitId: true, status: true } });
 
     const unitByKey = new Map<string, (typeof units)[number]>();
     for (const u of units) {
@@ -356,25 +382,43 @@ export class OnboardingService {
   ) {
     const preview = await this.previewBulkTenantInvites(input, actorUserId);
 
+    const ws = await this.prisma.workspace.findUnique({ where: { id: preview.workspaceId } });
+    if (!ws) throw new BadRequestException('Workspace not found');
+
     const sent: any[] = [];
     for (const row of preview.validRows as any[]) {
-      const resident = await this.prisma.resident.create({
-        data: {
-          workspaceId: preview.workspaceId,
-          fullName: row.fullName,
-          email: row.email,
-          phone: row.phone,
-          unitId: row.unitId,
-          role: ResidentRole.TENANT,
-          status: ResidentStatus.ACTIVE,
-        },
-      });
+      const resident = ws.templateType === TemplateType.ESTATE
+        ? await this.prisma.estateResident.create({
+            data: {
+              id: randomUUID(),
+              workspaceId: preview.workspaceId,
+              fullName: row.fullName,
+              email: row.email,
+              phone: row.phone,
+              unitId: row.unitId,
+              role: ResidentRole.TENANT,
+              status: ResidentStatus.ACTIVE,
+            },
+          })
+        : await this.prisma.apartmentResident.create({
+            data: {
+              id: randomUUID(),
+              workspaceId: preview.workspaceId,
+              fullName: row.fullName,
+              email: row.email,
+              phone: row.phone,
+              unitId: row.unitId,
+              role: ResidentRole.TENANT,
+              status: ResidentStatus.ACTIVE,
+            },
+          });
 
       if (row.unitId) {
-        await this.prisma.unit.update({
-          where: { id: row.unitId },
-          data: { status: UnitStatus.OCCUPIED },
-        });
+        if (ws.templateType === TemplateType.ESTATE) {
+          await this.prisma.estateUnit.updateMany({ where: { id: row.unitId }, data: { status: UnitStatus.OCCUPIED } });
+        } else {
+          await this.prisma.apartmentUnit.updateMany({ where: { id: row.unitId }, data: { status: UnitStatus.OCCUPIED } });
+        }
       }
 
       const invite = await this.createTenantInvite({

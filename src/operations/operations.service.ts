@@ -52,7 +52,7 @@ export class OperationsService {
     const recipients = new Set<string>();
 
     if (audience === NoticeAudience.ALL || audience === NoticeAudience.RESIDENTS) {
-      const residents = await this.prisma.resident.findMany({
+      const residents = await this.prisma.apartmentResident.findMany({
         where: { workspaceId, status: ResidentStatus.ACTIVE, email: { not: null } },
         select: { email: true },
       });
@@ -168,7 +168,6 @@ export class OperationsService {
     return this.prisma.inspection.findMany({
       where,
       orderBy: { dueDate: 'asc' },
-      include: { unit: { select: { id: true, label: true, block: true, floor: true } } },
     });
   }
 
@@ -185,7 +184,7 @@ export class OperationsService {
     let unitId: string | null = null;
     if (scope === InspectionScope.UNIT) {
       if (!dto.unitId) throw new BadRequestException('unitId is required for UNIT inspections');
-      const unit = await this.prisma.unit.findFirst({ where: { id: dto.unitId, workspaceId } });
+      const unit = await this.prisma.apartmentUnit.findFirst({ where: { id: dto.unitId, workspaceId } });
       if (!unit) throw new BadRequestException('unitId does not belong to this workspace');
       unitId = unit.id;
     }
@@ -209,7 +208,6 @@ export class OperationsService {
         dueDate: new Date(dto.dueDate),
         checklist: dto.checklist ?? [],
       },
-      include: { unit: { select: { id: true, label: true, block: true, floor: true } } },
     });
   }
 
@@ -228,7 +226,6 @@ export class OperationsService {
         status: dto.status ?? undefined,
         result: dto.result !== undefined ? dto.result : undefined,
       },
-      include: { unit: { select: { id: true, label: true } } },
     });
   }
 }

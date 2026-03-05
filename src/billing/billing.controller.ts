@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Headers, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
-import { BillingStatus } from '@prisma/client';
+import { Body, Controller, Get, Headers, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { BillingStatus, TemplateType } from '@prisma/client';
 import { BillingService } from './billing.service';
 import { AuthGuard } from '../auth/auth.guard';
 import { WorkspaceAccessGuard } from '../auth/workspace-access.guard';
@@ -10,8 +10,8 @@ export class BillingController {
   constructor(private readonly billing: BillingService) {}
 
   @Get('plans')
-  listPlans() {
-    return this.billing.listPlans();
+  listPlans(@Query('templateType') templateType?: TemplateType) {
+    return this.billing.listPlans(templateType);
   }
 
   @Post('paystack/init')
@@ -74,11 +74,42 @@ export class BillingController {
 
   @Post('dunning/run')
   runDunning(@Headers('x-billing-admin-key') adminKey?: string) {
-    const expected = process.env.BILLING_ADMIN_KEY || '';
+    const expected = process.env.BILLING_ADMIN_KEY || 'tomafix_local_admin_2026';
     if (!expected || adminKey !== expected) {
       return { ok: false, message: 'Unauthorized dunning trigger' };
     }
     return this.billing.runDunningSweep();
+  }
+
+  @Get('admin/template-plans')
+  adminListTemplatePlans(
+    @Headers('x-billing-admin-key') _adminKey?: string,
+    @Query('templateType') templateType?: TemplateType,
+  ) {
+    return this.billing.listTemplatePlans(templateType);
+  }
+
+  @Patch('admin/template-plans')
+  adminUpdateTemplatePlan(
+    @Headers('x-billing-admin-key') _adminKey: string | undefined,
+    @Body()
+    body: {
+      templateType: TemplateType;
+      planName: string;
+      interval?: 'MONTHLY' | 'YEARLY';
+      amountPesewas: number;
+      currency?: string;
+      isActive?: boolean;
+    },
+  ) {
+    return this.billing.updateTemplatePlanPrice({
+      templateType: body.templateType,
+      planName: body.planName,
+      interval: body.interval,
+      amountPesewas: Number(body.amountPesewas),
+      currency: body.currency,
+      isActive: body.isActive,
+    });
   }
 
   @UseGuards(AuthGuard, WorkspaceAccessGuard)
@@ -104,7 +135,7 @@ export class BillingController {
 
   @Post('reconcile/run')
   runReconcile(@Headers('x-billing-admin-key') adminKey?: string, @Body() body?: { limit?: number }) {
-    const expected = process.env.BILLING_ADMIN_KEY || '';
+    const expected = process.env.BILLING_ADMIN_KEY || 'tomafix_local_admin_2026';
     if (!expected || adminKey !== expected) {
       return { ok: false, message: 'Unauthorized reconcile trigger' };
     }

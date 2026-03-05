@@ -9,6 +9,7 @@ import {
   TemplateType,
   UnitStatus,
 } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { getEntitlements, resolvePlanName } from '../billing/planConfig';
@@ -112,7 +113,9 @@ export class ApartmentService {
 
     const planName = resolvePlanName((ws as any).planName || 'Starter');
     const limit = getEntitlements(planName).limits.units;
-    const used = await this.prisma.unit.count({ where: { workspaceId } });
+    const used = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateUnit.count({ where: { workspaceId } })
+      : await this.prisma.apartmentUnit.count({ where: { workspaceId } });
 
     if (used >= limit) {
       throw new ForbiddenException({
@@ -125,21 +128,34 @@ export class ApartmentService {
   }
 
   async getDashboard(workspaceId: string, estateId?: string) {
-    await this.assertPropertyWorkspace(workspaceId);
+    const ws = await this.assertPropertyWorkspace(workspaceId);
     const resolvedEstateId = await this.resolveEstateIdForWorkspace(workspaceId, estateId);
 
-    const [unitBuckets, requestBuckets] = await Promise.all([
-      this.prisma.unit.groupBy({
-        by: ['status'],
-        where: { workspaceId, ...(resolvedEstateId ? { estateId: resolvedEstateId } : {}) },
-        _count: { _all: true },
-      }),
-      this.prisma.request.groupBy({
-        by: ['status'],
-        where: { workspaceId, status: { in: [RequestStatus.PENDING, RequestStatus.IN_PROGRESS] }, ...(resolvedEstateId ? { unit: { estateId: resolvedEstateId } } : {}) },
-        _count: { _all: true },
-      }),
-    ]);
+    const [unitBuckets, requestBuckets] = ws.templateType === TemplateType.ESTATE
+      ? await Promise.all([
+          this.prisma.estateUnit.groupBy({
+            by: ['status'],
+            where: { workspaceId, ...(resolvedEstateId ? { estateId: resolvedEstateId } : {}) },
+            _count: { _all: true },
+          }),
+          this.prisma.estateRequest.groupBy({
+            by: ['status'],
+            where: { workspaceId, status: { in: [RequestStatus.PENDING, RequestStatus.IN_PROGRESS] }, ...(resolvedEstateId ? { unit: { estateId: resolvedEstateId } } : {}) },
+            _count: { _all: true },
+          }),
+        ])
+      : await Promise.all([
+          this.prisma.apartmentUnit.groupBy({
+            by: ['status'],
+            where: { workspaceId },
+            _count: { _all: true },
+          }),
+          this.prisma.apartmentRequest.groupBy({
+            by: ['status'],
+            where: { workspaceId, status: { in: [RequestStatus.PENDING, RequestStatus.IN_PROGRESS] } },
+            _count: { _all: true },
+          }),
+        ]);
 
     const totalUnits = unitBuckets.reduce((sum, row) => sum + row._count._all, 0);
     const occupiedUnits = unitBuckets.find((row) => row.status === UnitStatus.OCCUPIED)?._count._all ?? 0;
@@ -149,15 +165,25 @@ export class ApartmentService {
     const pendingRequests = requestBuckets.find((row) => row.status === RequestStatus.PENDING)?._count._all ?? 0;
     const inProgressRequests = requestBuckets.find((row) => row.status === RequestStatus.IN_PROGRESS)?._count._all ?? 0;
 
-    const recentRequests = await this.prisma.request.findMany({
-      where: { workspaceId, ...(resolvedEstateId ? { unit: { estateId: resolvedEstateId } } : {}) },
-      orderBy: { createdAt: 'desc' },
-      take: 6,
-      include: {
-        unit: { select: { id: true, label: true, block: true, floor: true } },
-        resident: { select: { id: true, fullName: true } },
-      },
-    });
+    const recentRequests = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateRequest.findMany({
+          where: { workspaceId, ...(resolvedEstateId ? { unit: { estateId: resolvedEstateId } } : {}) },
+          orderBy: { createdAt: 'desc' },
+          take: 6,
+          include: {
+            unit: { select: { id: true, label: true, block: true, floor: true } },
+            resident: { select: { id: true, fullName: true } },
+          },
+        })
+      : await this.prisma.apartmentRequest.findMany({
+          where: { workspaceId },
+          orderBy: { createdAt: 'desc' },
+          take: 6,
+          include: {
+            unit: { select: { id: true, label: true, block: true, floor: true } },
+            resident: { select: { id: true, fullName: true } },
+          },
+        });
 
     return {
       units: {
@@ -183,7 +209,7 @@ export class ApartmentService {
       orderBy: [{ createdAt: 'asc' }],
       include: {
         _count: {
-          select: { units: true },
+          select: { estateUnits: true },
         },
       },
     });
@@ -192,7 +218,7 @@ export class ApartmentService {
 
     const created = await this.prisma.estate.create({
       data: { workspaceId, name: 'Main Estate', code: 'MAIN' },
-      include: { _count: { select: { units: true } } },
+      include: { _count: { select: { estateUnits: true } } },
     });
     return [created];
   }
@@ -246,7 +272,7 @@ export class ApartmentService {
     const estate = await this.prisma.estate.findFirst({ where: { id: estateId, workspaceId } });
     if (!estate) throw new NotFoundException('Estate not found');
 
-    const unitCount = await this.prisma.unit.count({ where: { workspaceId, estateId } });
+    const unitCount = await this.prisma.estateUnit.count({ where: { workspaceId, estateId } });
     if (unitCount > 0) {
       throw new BadRequestException('Cannot delete estate: units are assigned to it');
     }
@@ -275,25 +301,35 @@ export class ApartmentService {
   }
 
   async listUnits(workspaceId: string, actorUserId?: string, estateId?: string) {
-    await this.assertPropertyWorkspace(workspaceId);
+    const ws = await this.assertPropertyWorkspace(workspaceId);
     const staffBlocks = await this.getStaffBlockScope(workspaceId, actorUserId);
     const resolvedEstateId = await this.resolveEstateIdForWorkspace(workspaceId, estateId);
 
-    return this.prisma.unit.findMany({
+    if (ws.templateType === TemplateType.ESTATE) {
+      return this.prisma.estateUnit.findMany({
+        where: {
+          workspaceId,
+          ...(resolvedEstateId ? { estateId: resolvedEstateId } : {}),
+          ...(staffBlocks ? { block: { in: staffBlocks } } : {}),
+        },
+        include: {
+          estate: { select: { id: true, name: true, code: true } },
+        },
+        orderBy: [{ block: 'asc' }, { floor: 'asc' }, { label: 'asc' }],
+      });
+    }
+
+    return this.prisma.apartmentUnit.findMany({
       where: {
         workspaceId,
-        ...(resolvedEstateId ? { estateId: resolvedEstateId } : {}),
         ...(staffBlocks ? { block: { in: staffBlocks } } : {}),
-      },
-      include: {
-        estate: { select: { id: true, name: true, code: true } },
       },
       orderBy: [{ block: 'asc' }, { floor: 'asc' }, { label: 'asc' }],
     });
   }
 
   async createUnit(workspaceId: string, dto: CreateUnitDto) {
-    await this.assertPropertyWorkspace(workspaceId);
+    const ws = await this.assertPropertyWorkspace(workspaceId);
     await this.assertUnitsPlanLimit(workspaceId);
 
     const label = dto.label.trim();
@@ -302,17 +338,31 @@ export class ApartmentService {
     const estateId = await this.resolveEstateIdForWorkspace(workspaceId, dto.estateId);
 
     try {
-      return await this.prisma.unit.create({
+      if (ws.templateType === TemplateType.ESTATE) {
+        return await this.prisma.estateUnit.create({
+          data: {
+            id: randomUUID(),
+            workspaceId,
+            estateId,
+            label,
+            block,
+            floor,
+            status: dto.status ?? UnitStatus.VACANT,
+          },
+          include: {
+            estate: { select: { id: true, name: true, code: true } },
+          },
+        });
+      }
+
+      return await this.prisma.apartmentUnit.create({
         data: {
+          id: randomUUID(),
           workspaceId,
-          estateId,
           label,
           block,
           floor,
           status: dto.status ?? UnitStatus.VACANT,
-        },
-        include: {
-          estate: { select: { id: true, name: true, code: true } },
         },
       });
     } catch (e: unknown) {
@@ -330,9 +380,11 @@ export class ApartmentService {
   }
 
   async updateUnit(workspaceId: string, unitId: string, dto: Partial<CreateUnitDto>) {
-    await this.assertPropertyWorkspace(workspaceId);
+    const ws = await this.assertPropertyWorkspace(workspaceId);
 
-    const unit = await this.prisma.unit.findFirst({ where: { id: unitId, workspaceId } });
+    const unit = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateUnit.findFirst({ where: { id: unitId, workspaceId } })
+      : await this.prisma.apartmentUnit.findFirst({ where: { id: unitId, workspaceId } });
     if (!unit) throw new NotFoundException('Unit not found');
 
     if (dto.label !== undefined && !dto.label.trim()) {
@@ -344,17 +396,29 @@ export class ApartmentService {
       : undefined;
 
     try {
-      return await this.prisma.unit.update({
+      if (ws.templateType === TemplateType.ESTATE) {
+        return await this.prisma.estateUnit.update({
+          where: { id: unitId },
+          data: {
+            estateId,
+            label: dto.label !== undefined ? dto.label.trim() : undefined,
+            block: dto.block !== undefined ? (dto.block.trim() ? dto.block.trim() : null) : undefined,
+            floor: dto.floor !== undefined ? (dto.floor.trim() ? dto.floor.trim() : null) : undefined,
+            status: dto.status !== undefined ? dto.status : undefined,
+          },
+          include: {
+            estate: { select: { id: true, name: true, code: true } },
+          },
+        });
+      }
+
+      return await this.prisma.apartmentUnit.update({
         where: { id: unitId },
         data: {
-          estateId,
           label: dto.label !== undefined ? dto.label.trim() : undefined,
           block: dto.block !== undefined ? (dto.block.trim() ? dto.block.trim() : null) : undefined,
           floor: dto.floor !== undefined ? (dto.floor.trim() ? dto.floor.trim() : null) : undefined,
           status: dto.status !== undefined ? dto.status : undefined,
-        },
-        include: {
-          estate: { select: { id: true, name: true, code: true } },
         },
       });
     } catch (e: unknown) {
@@ -366,27 +430,50 @@ export class ApartmentService {
   }
 
   async deleteUnit(workspaceId: string, unitId: string) {
-    await this.assertPropertyWorkspace(workspaceId);
+    const ws = await this.assertPropertyWorkspace(workspaceId);
 
-    const unit = await this.prisma.unit.findFirst({ where: { id: unitId, workspaceId } });
+    const unit = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateUnit.findFirst({ where: { id: unitId, workspaceId } })
+      : await this.prisma.apartmentUnit.findFirst({ where: { id: unitId, workspaceId } });
     if (!unit) throw new NotFoundException('Unit not found');
 
-    const [residentCount, requestCount] = await Promise.all([
-      this.prisma.resident.count({ where: { workspaceId, unitId } }),
-      this.prisma.request.count({ where: { workspaceId, unitId } }),
-    ]);
+    const [residentCount, requestCount] = ws.templateType === TemplateType.ESTATE
+      ? await Promise.all([
+          this.prisma.estateResident.count({ where: { workspaceId, unitId } }),
+          this.prisma.estateRequest.count({ where: { workspaceId, unitId } }),
+        ])
+      : await Promise.all([
+          this.prisma.apartmentResident.count({ where: { workspaceId, unitId } }),
+          this.prisma.apartmentRequest.count({ where: { workspaceId, unitId } }),
+        ]);
 
     if (residentCount > 0) throw new BadRequestException('Cannot delete unit: residents are assigned to this unit');
     if (requestCount > 0) throw new BadRequestException('Cannot delete unit: requests exist for this unit');
 
-    await this.prisma.unit.delete({ where: { id: unitId } });
+    if (ws.templateType === TemplateType.ESTATE) {
+      await this.prisma.estateUnit.delete({ where: { id: unitId } });
+    } else {
+      await this.prisma.apartmentUnit.delete({ where: { id: unitId } });
+    }
     return { ok: true };
   }
 
   async listResidents(workspaceId: string, actorUserId?: string) {
-    await this.assertPropertyWorkspace(workspaceId);
+    const ws = await this.assertPropertyWorkspace(workspaceId);
     const staffBlocks = await this.getStaffBlockScope(workspaceId, actorUserId);
-    return this.prisma.resident.findMany({
+
+    if (ws.templateType === TemplateType.ESTATE) {
+      return this.prisma.estateResident.findMany({
+        where: {
+          workspaceId,
+          ...(staffBlocks ? { unit: { block: { in: staffBlocks } } } : {}),
+        },
+        orderBy: [{ fullName: 'asc' }],
+        include: { unit: { select: { id: true, label: true, block: true, floor: true } } },
+      });
+    }
+
+    return this.prisma.apartmentResident.findMany({
       where: {
         workspaceId,
         ...(staffBlocks ? { unit: { block: { in: staffBlocks } } } : {}),
@@ -397,50 +484,76 @@ export class ApartmentService {
   }
 
   private async syncUnitOccupancy(workspaceId: string, unitId: string) {
+    const ws = await this.assertPropertyWorkspace(workspaceId);
     const [unit, activeResidents] = await Promise.all([
-      this.prisma.unit.findFirst({ where: { id: unitId, workspaceId } }),
-      this.prisma.resident.count({ where: { workspaceId, unitId, status: ResidentStatus.ACTIVE } }),
+      ws.templateType === TemplateType.ESTATE
+        ? this.prisma.estateUnit.findFirst({ where: { id: unitId, workspaceId } })
+        : this.prisma.apartmentUnit.findFirst({ where: { id: unitId, workspaceId } }),
+      ws.templateType === TemplateType.ESTATE
+        ? this.prisma.estateResident.count({ where: { workspaceId, unitId, status: ResidentStatus.ACTIVE } })
+        : this.prisma.apartmentResident.count({ where: { workspaceId, unitId, status: ResidentStatus.ACTIVE } }),
     ]);
 
     if (!unit) return;
 
-    if (activeResidents > 0 && unit.status !== UnitStatus.OCCUPIED) {
-      await this.prisma.unit.update({ where: { id: unitId }, data: { status: UnitStatus.OCCUPIED } });
-      return;
-    }
-
-    if (activeResidents === 0 && unit.status === UnitStatus.OCCUPIED) {
-      await this.prisma.unit.update({ where: { id: unitId }, data: { status: UnitStatus.VACANT } });
+    const nextStatus = activeResidents > 0 ? UnitStatus.OCCUPIED : UnitStatus.VACANT;
+    if (unit.status !== nextStatus) {
+      if (ws.templateType === TemplateType.ESTATE) {
+        await this.prisma.estateUnit.updateMany({ where: { id: unitId }, data: { status: nextStatus } });
+      } else {
+        await this.prisma.apartmentUnit.updateMany({ where: { id: unitId }, data: { status: nextStatus } });
+      }
     }
   }
 
   async createResident(workspaceId: string, dto: CreateResidentDto) {
-    await this.assertPropertyWorkspace(workspaceId);
+    const ws = await this.assertPropertyWorkspace(workspaceId);
 
     if (dto.unitId) {
-      const unit = await this.prisma.unit.findFirst({ where: { id: dto.unitId, workspaceId } });
+      const unit = ws.templateType === TemplateType.ESTATE
+        ? await this.prisma.estateUnit.findFirst({ where: { id: dto.unitId, workspaceId } })
+        : await this.prisma.apartmentUnit.findFirst({ where: { id: dto.unitId, workspaceId } });
       if (!unit) throw new BadRequestException('unitId does not belong to this workspace');
 
-      const existingActive = await this.prisma.resident.findFirst({
-        where: { workspaceId, unitId: dto.unitId, status: ResidentStatus.ACTIVE },
-        select: { id: true, fullName: true },
-      });
+      const existingActive = ws.templateType === TemplateType.ESTATE
+        ? await this.prisma.estateResident.findFirst({
+            where: { workspaceId, unitId: dto.unitId, status: ResidentStatus.ACTIVE },
+            select: { id: true, fullName: true },
+          })
+        : await this.prisma.apartmentResident.findFirst({
+            where: { workspaceId, unitId: dto.unitId, status: ResidentStatus.ACTIVE },
+            select: { id: true, fullName: true },
+          });
       if (existingActive) {
         throw new ConflictException(`Unit is already assigned to active resident: ${existingActive.fullName}`);
       }
     }
 
-    const resident = await this.prisma.resident.create({
-      data: {
-        workspaceId,
-        unitId: dto.unitId ?? null,
-        fullName: dto.fullName.trim(),
-        phone: dto.phone?.trim() || null,
-        email: dto.email?.trim().toLowerCase() || null,
-        role: dto.role ?? ResidentRole.TENANT,
-        status: dto.status ?? ResidentStatus.ACTIVE,
-      },
-    });
+    const resident = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateResident.create({
+          data: {
+            id: randomUUID(),
+            workspaceId,
+            unitId: dto.unitId ?? null,
+            fullName: dto.fullName.trim(),
+            phone: dto.phone?.trim() || null,
+            email: dto.email?.trim().toLowerCase() || null,
+            role: dto.role ?? ResidentRole.TENANT,
+            status: dto.status ?? ResidentStatus.ACTIVE,
+          },
+        })
+      : await this.prisma.apartmentResident.create({
+          data: {
+            id: randomUUID(),
+            workspaceId,
+            unitId: dto.unitId ?? null,
+            fullName: dto.fullName.trim(),
+            phone: dto.phone?.trim() || null,
+            email: dto.email?.trim().toLowerCase() || null,
+            role: dto.role ?? ResidentRole.TENANT,
+            status: dto.status ?? ResidentStatus.ACTIVE,
+          },
+        });
 
     let inviteSent = false;
     let inviteUrl: string | null = null;
@@ -462,9 +575,11 @@ export class ApartmentService {
   }
 
   async updateResident(workspaceId: string, residentId: string, dto: Partial<CreateResidentDto>) {
-    await this.assertPropertyWorkspace(workspaceId);
+    const ws = await this.assertPropertyWorkspace(workspaceId);
 
-    const resident = await this.prisma.resident.findFirst({ where: { id: residentId, workspaceId } });
+    const resident = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateResident.findFirst({ where: { id: residentId, workspaceId } })
+      : await this.prisma.apartmentResident.findFirst({ where: { id: residentId, workspaceId } });
     if (!resident) throw new NotFoundException('Resident not found');
 
     if (dto.fullName !== undefined && !dto.fullName.trim()) {
@@ -472,24 +587,37 @@ export class ApartmentService {
     }
 
     if (dto.unitId !== undefined && dto.unitId !== null && dto.unitId !== '') {
-      const unit = await this.prisma.unit.findFirst({ where: { id: dto.unitId, workspaceId } });
+      const unit = ws.templateType === TemplateType.ESTATE
+        ? await this.prisma.estateUnit.findFirst({ where: { id: dto.unitId, workspaceId } })
+        : await this.prisma.apartmentUnit.findFirst({ where: { id: dto.unitId, workspaceId } });
       if (!unit) throw new BadRequestException('unitId does not belong to this workspace');
 
-      const existingActive = await this.prisma.resident.findFirst({
-        where: {
-          workspaceId,
-          unitId: dto.unitId,
-          status: ResidentStatus.ACTIVE,
-          id: { not: residentId },
-        },
-        select: { id: true, fullName: true },
-      });
+      const existingActive = ws.templateType === TemplateType.ESTATE
+        ? await this.prisma.estateResident.findFirst({
+            where: {
+              workspaceId,
+              unitId: dto.unitId,
+              status: ResidentStatus.ACTIVE,
+              id: { not: residentId },
+            },
+            select: { id: true, fullName: true },
+          })
+        : await this.prisma.apartmentResident.findFirst({
+            where: {
+              workspaceId,
+              unitId: dto.unitId,
+              status: ResidentStatus.ACTIVE,
+              id: { not: residentId },
+            },
+            select: { id: true, fullName: true },
+          });
       if (existingActive) {
         throw new ConflictException(`Unit is already assigned to active resident: ${existingActive.fullName}`);
       }
     }
 
-    const updated = await this.prisma.resident.update({
+    const updated = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateResident.update({
       where: { id: residentId },
       data: {
         fullName: dto.fullName !== undefined ? dto.fullName.trim() : undefined,
@@ -500,7 +628,19 @@ export class ApartmentService {
         status: dto.status !== undefined ? dto.status : undefined,
       },
       include: { unit: { select: { id: true, label: true, block: true, floor: true } } },
-    });
+      })
+      : await this.prisma.apartmentResident.update({
+          where: { id: residentId },
+          data: {
+            fullName: dto.fullName !== undefined ? dto.fullName.trim() : undefined,
+            email: dto.email !== undefined ? (dto.email?.trim().toLowerCase() || null) : undefined,
+            phone: dto.phone !== undefined ? (dto.phone?.trim() || null) : undefined,
+            unitId: dto.unitId !== undefined ? (dto.unitId || null) : undefined,
+            role: dto.role !== undefined ? dto.role : undefined,
+            status: dto.status !== undefined ? dto.status : undefined,
+          },
+          include: { unit: { select: { id: true, label: true, block: true, floor: true } } },
+        });
 
     if (resident.unitId) await this.syncUnitOccupancy(workspaceId, resident.unitId);
     if (updated.unitId && updated.unitId !== resident.unitId) await this.syncUnitOccupancy(workspaceId, updated.unitId);
@@ -509,40 +649,61 @@ export class ApartmentService {
   }
 
   async deleteResident(workspaceId: string, residentId: string) {
-    await this.assertPropertyWorkspace(workspaceId);
+    const ws = await this.assertPropertyWorkspace(workspaceId);
 
-    const resident = await this.prisma.resident.findFirst({ where: { id: residentId, workspaceId } });
+    const resident = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateResident.findFirst({ where: { id: residentId, workspaceId } })
+      : await this.prisma.apartmentResident.findFirst({ where: { id: residentId, workspaceId } });
     if (!resident) throw new NotFoundException('Resident not found');
 
-    const requestCount = await this.prisma.request.count({ where: { workspaceId, residentId } });
+    const requestCount = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateRequest.count({ where: { workspaceId, residentId } })
+      : await this.prisma.apartmentRequest.count({ where: { workspaceId, residentId } });
 
     // Keep request history intact: archive resident instead of hard delete.
     if (requestCount > 0) {
-      const archived = await this.prisma.resident.update({
+      const archived = ws.templateType === TemplateType.ESTATE
+        ? await this.prisma.estateResident.update({
         where: { id: residentId },
         data: {
           status: ResidentStatus.INACTIVE,
           unitId: null,
         },
-      });
+      })
+        : await this.prisma.apartmentResident.update({ where: { id: residentId }, data: { status: ResidentStatus.INACTIVE, unitId: null } });
       if (resident.unitId) await this.syncUnitOccupancy(workspaceId, resident.unitId);
       return { ok: true, mode: 'archived', resident: archived };
     }
 
-    await this.prisma.resident.delete({ where: { id: residentId } });
+    if (ws.templateType === TemplateType.ESTATE) {
+      await this.prisma.estateResident.delete({ where: { id: residentId } });
+    } else {
+      await this.prisma.apartmentResident.delete({ where: { id: residentId } });
+    }
     if (resident.unitId) await this.syncUnitOccupancy(workspaceId, resident.unitId);
     return { ok: true, mode: 'deleted' };
   }
 
   async listRequests(workspaceId: string, status?: string, actorUserId?: string) {
-    await this.assertPropertyWorkspace(workspaceId);
+    const ws = await this.assertPropertyWorkspace(workspaceId);
 
     const where: any = { workspaceId };
     const staffBlocks = await this.getStaffBlockScope(workspaceId, actorUserId);
     if (staffBlocks) where.unit = { block: { in: staffBlocks } };
     if (status) where.status = status as RequestStatus;
 
-    return this.prisma.request.findMany({
+    if (ws.templateType === TemplateType.ESTATE) {
+      return this.prisma.estateRequest.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          unit: { select: { id: true, label: true, block: true, floor: true } },
+          resident: { select: { id: true, fullName: true } },
+        },
+      });
+    }
+
+    return this.prisma.apartmentRequest.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       include: {
@@ -553,9 +714,11 @@ export class ApartmentService {
   }
 
   async createRequest(workspaceId: string, dto: CreateRequestDto, actorUserId?: string) {
-    await this.assertPropertyWorkspace(workspaceId);
+    const ws = await this.assertPropertyWorkspace(workspaceId);
 
-    const unit = await this.prisma.unit.findFirst({ where: { id: dto.unitId, workspaceId } });
+    const unit = ws.templateType === TemplateType.ESTATE
+        ? await this.prisma.estateUnit.findFirst({ where: { id: dto.unitId, workspaceId } })
+        : await this.prisma.apartmentUnit.findFirst({ where: { id: dto.unitId, workspaceId } });
     if (!unit) throw new BadRequestException('unitId does not belong to this workspace');
 
     const staffBlocks = await this.getStaffBlockScope(workspaceId, actorUserId);
@@ -565,15 +728,22 @@ export class ApartmentService {
 
     let resident: { id: string; fullName: string; email: string | null } | null = null;
     if (dto.residentId) {
-      resident = await this.prisma.resident.findFirst({
-        where: { id: dto.residentId, workspaceId },
-        select: { id: true, fullName: true, email: true },
-      });
+      resident = ws.templateType === TemplateType.ESTATE
+        ? await this.prisma.estateResident.findFirst({
+            where: { id: dto.residentId, workspaceId },
+            select: { id: true, fullName: true, email: true },
+          })
+        : await this.prisma.apartmentResident.findFirst({
+            where: { id: dto.residentId, workspaceId },
+            select: { id: true, fullName: true, email: true },
+          });
       if (!resident) throw new BadRequestException('residentId does not belong to this workspace');
     }
 
-    const created = await this.prisma.request.create({
+    const created = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateRequest.create({
       data: {
+        id: randomUUID(),
         workspaceId,
         unitId: dto.unitId,
         residentId: dto.residentId ?? null,
@@ -587,14 +757,31 @@ export class ApartmentService {
         unit: { select: { id: true, label: true, block: true, floor: true } },
         resident: { select: { id: true, fullName: true } },
       },
-    });
+      })
+      : await this.prisma.apartmentRequest.create({
+          data: {
+            id: randomUUID(),
+            workspaceId,
+            unitId: dto.unitId,
+            residentId: dto.residentId ?? null,
+            title: dto.title.trim(),
+            description: dto.description?.trim() || null,
+            photoUrl: dto.photoUrl?.trim() || null,
+            priority: dto.priority ?? RequestPriority.NORMAL,
+            status: dto.status ?? RequestStatus.PENDING,
+          },
+          include: {
+            unit: { select: { id: true, label: true, block: true, floor: true } },
+            resident: { select: { id: true, fullName: true } },
+          },
+        });
 
     if (resident?.email) {
       try {
         await this.sendEmail({
           to: resident.email,
           subject: `Request created • ${dto.title.trim()}`,
-          html: `<p>Your request has been created.</p><p><b>Title:</b> ${created.title}</p><p><b>Unit:</b> ${created.unit?.label || '-'}</p><p>Status: Pending</p>`,
+          html: `<p>Your request has been created.</p><p><b>Title:</b> ${created.title}</p><p><b>Unit:</b> ${unit.label || '-'}</p><p>Status: Pending</p>`,
         });
       } catch (e: any) {
         this.logger.warn(`Tenant request-create notification failed: ${e?.message || e}`);
@@ -609,12 +796,15 @@ export class ApartmentService {
     requestId: string,
     dto: { status?: RequestStatus; priority?: RequestPriority },
   ) {
-    await this.assertPropertyWorkspace(workspaceId);
+    const ws = await this.assertPropertyWorkspace(workspaceId);
 
-    const req = await this.prisma.request.findFirst({ where: { id: requestId, workspaceId } });
+    const req = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateRequest.findFirst({ where: { id: requestId, workspaceId } })
+      : await this.prisma.apartmentRequest.findFirst({ where: { id: requestId, workspaceId } });
     if (!req) throw new NotFoundException('Request not found');
 
-    return this.prisma.request.update({
+    const updated = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateRequest.update({
       where: { id: requestId },
       data: {
         status: dto.status ?? undefined,
@@ -624,18 +814,26 @@ export class ApartmentService {
         unit: { select: { id: true, label: true, block: true, floor: true } },
         resident: { select: { id: true, fullName: true } },
       },
-    });
+          })
+      : await this.prisma.apartmentRequest.update({
+          where: { id: requestId },
+          data: { status: dto.status ?? undefined, priority: dto.priority ?? undefined },
+          include: { unit: { select: { id: true, label: true, block: true, floor: true } }, resident: { select: { id: true, fullName: true } } },
+        });
+
+    return updated;
   }
 
   async listRequestMessages(workspaceId: string, requestId: string) {
-    await this.assertPropertyWorkspace(workspaceId);
-    const req = await this.prisma.request.findFirst({ where: { id: requestId, workspaceId } });
+    const ws = await this.assertPropertyWorkspace(workspaceId);
+    const req = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateRequest.findFirst({ where: { id: requestId, workspaceId } })
+      : await this.prisma.apartmentRequest.findFirst({ where: { id: requestId, workspaceId } });
     if (!req) throw new NotFoundException('Request not found');
 
-    return this.prisma.requestMessage.findMany({
-      where: { workspaceId, requestId },
-      orderBy: { createdAt: 'asc' },
-    });
+    return ws.templateType === TemplateType.ESTATE
+      ? this.prisma.estateRequestMessage.findMany({ where: { workspaceId, requestId }, orderBy: { createdAt: 'asc' } })
+      : this.prisma.apartmentRequestMessage.findMany({ where: { workspaceId, requestId }, orderBy: { createdAt: 'asc' } });
   }
 
   async addRequestMessage(
@@ -643,8 +841,10 @@ export class ApartmentService {
     requestId: string,
     dto: { senderUserId?: string; senderName?: string; body: string },
   ) {
-    await this.assertPropertyWorkspace(workspaceId);
-    const req = await this.prisma.request.findFirst({ where: { id: requestId, workspaceId } });
+    const ws = await this.assertPropertyWorkspace(workspaceId);
+    const req = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateRequest.findFirst({ where: { id: requestId, workspaceId } })
+      : await this.prisma.apartmentRequest.findFirst({ where: { id: requestId, workspaceId } });
     if (!req) throw new NotFoundException('Request not found');
 
     const body = String(dto.body || '').trim();
@@ -656,22 +856,33 @@ export class ApartmentService {
       senderName = user?.fullName || user?.email || 'User';
     }
 
-    const msg = await this.prisma.requestMessage.create({
-      data: {
-        workspaceId,
-        requestId,
-        senderUserId: dto.senderUserId || null,
-        senderName: senderName || 'User',
-        body,
-      },
-    });
+    const msg = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateRequestMessage.create({
+          data: {
+            id: randomUUID(),
+            workspaceId,
+            requestId,
+            senderUserId: dto.senderUserId || null,
+            senderName: senderName || 'User',
+            body,
+          },
+        })
+      : await this.prisma.apartmentRequestMessage.create({
+          data: {
+            id: randomUUID(),
+            workspaceId,
+            requestId,
+            senderUserId: dto.senderUserId || null,
+            senderName: senderName || 'User',
+            body,
+          },
+        });
 
     if (req.residentId) {
       try {
-        const resident = await this.prisma.resident.findFirst({
-          where: { id: req.residentId, workspaceId },
-          select: { email: true },
-        });
+        const resident = ws.templateType === TemplateType.ESTATE
+          ? await this.prisma.estateResident.findFirst({ where: { id: req.residentId, workspaceId }, select: { email: true } })
+          : await this.prisma.apartmentResident.findFirst({ where: { id: req.residentId, workspaceId }, select: { email: true } });
         if (resident?.email) {
           await this.sendEmail({
             to: resident.email,

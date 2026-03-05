@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { cacheGet, cacheSet } from './cache';
 import { FeatureKey, GatedErrorPayload, LimitKey, PlanName } from '../types/billing';
 import { getEntitlements, assertPlanExists } from './planConfig';
+import { TemplateType } from '@prisma/client';
 
 type GuardedMutation = {
   limit?: LimitKey;
@@ -75,7 +76,9 @@ export class EntitlementsGuard implements NestMiddleware {
 
     const [propertiesUsed, unitsUsed] = await Promise.all([
       this.prisma.property.count({ where: { workspaceId } }),
-      this.prisma.unit.count({ where: { workspaceId } }),
+      ws.templateType === TemplateType.ESTATE
+        ? this.prisma.estateUnit.count({ where: { workspaceId } })
+        : this.prisma.apartmentUnit.count({ where: { workspaceId } }),
     ]);
 
     const value = { planName, usage: { propertiesUsed, unitsUsed } };

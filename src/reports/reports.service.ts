@@ -50,16 +50,16 @@ export class ReportsService {
     const baseWhere = { workspaceId, ...(createdAtFilter ? { createdAt: createdAtFilter } : {}) };
 
     const [totalRequests, openRequests, resolvedRequests, urgentRequests, totalResidents, totalInspections, completedInspections] = await Promise.all([
-      this.prisma.request.count({ where: baseWhere }),
-      this.prisma.request.count({ where: { ...baseWhere, status: { in: [RequestStatus.PENDING, RequestStatus.IN_PROGRESS] } } }),
-      this.prisma.request.count({ where: { ...baseWhere, status: { in: [RequestStatus.RESOLVED, RequestStatus.CLOSED] } } }),
-      this.prisma.request.count({ where: { ...baseWhere, priority: { in: [RequestPriority.URGENT, RequestPriority.HIGH] } } }),
-      this.prisma.resident.count({ where: { workspaceId } }),
+      this.prisma.apartmentRequest.count({ where: baseWhere }),
+      this.prisma.apartmentRequest.count({ where: { ...baseWhere, status: { in: [RequestStatus.PENDING, RequestStatus.IN_PROGRESS] } } }),
+      this.prisma.apartmentRequest.count({ where: { ...baseWhere, status: { in: [RequestStatus.RESOLVED, RequestStatus.CLOSED] } } }),
+      this.prisma.apartmentRequest.count({ where: { ...baseWhere, priority: { in: [RequestPriority.URGENT, RequestPriority.HIGH] } } }),
+      this.prisma.apartmentResident.count({ where: { workspaceId } }),
       this.prisma.inspection.count({ where: baseWhere as any }),
       this.prisma.inspection.count({ where: { ...(baseWhere as any), status: 'COMPLETED' as any } }),
     ]);
 
-    const breaches = await this.prisma.request.findMany({
+    const breaches = await this.prisma.apartmentRequest.findMany({
       where: { workspaceId, status: { in: [RequestStatus.PENDING, RequestStatus.IN_PROGRESS] } },
       select: { id: true, createdAt: true, priority: true },
       orderBy: { createdAt: 'desc' },
@@ -89,7 +89,7 @@ export class ReportsService {
 
   async exportRequestsCsv(workspaceId: string) {
     await this.assertApartmentWorkspace(workspaceId);
-    const rows = await this.prisma.request.findMany({
+    const rows = await this.prisma.apartmentRequest.findMany({
       where: { workspaceId },
       include: { unit: { select: { label: true } }, resident: { select: { fullName: true } } },
       orderBy: { createdAt: 'desc' },
@@ -113,7 +113,7 @@ export class ReportsService {
 
   async exportResidentsCsv(workspaceId: string) {
     await this.assertApartmentWorkspace(workspaceId);
-    const rows = await this.prisma.resident.findMany({ where: { workspaceId }, include: { unit: { select: { label: true } } }, orderBy: { createdAt: 'desc' } });
+    const rows = await this.prisma.apartmentResident.findMany({ where: { workspaceId }, include: { unit: { select: { label: true } } }, orderBy: { createdAt: 'desc' } });
     const header = ['id', 'fullName', 'email', 'phone', 'role', 'status', 'unit', 'createdAt'];
     const lines = [header.join(',')];
     rows.forEach((r) => {
@@ -124,11 +124,11 @@ export class ReportsService {
 
   async exportInspectionsCsv(workspaceId: string) {
     await this.assertApartmentWorkspace(workspaceId);
-    const rows = await this.prisma.inspection.findMany({ where: { workspaceId }, include: { unit: { select: { label: true } } }, orderBy: { createdAt: 'desc' } });
+    const rows = await this.prisma.inspection.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' } });
     const header = ['id', 'title', 'status', 'scope', 'block', 'floor', 'unit', 'dueDate', 'result', 'createdAt'];
     const lines = [header.join(',')];
     rows.forEach((r) => {
-      lines.push([r.id, r.title, r.status, r.scope, r.block || '', r.floor || '', r.unit?.label || '', r.dueDate.toISOString(), r.result || '', r.createdAt.toISOString()].map(csvEscape).join(','));
+      lines.push([r.id, r.title, r.status, r.scope, r.block || '', r.floor || '', '', r.dueDate.toISOString(), r.result || '', r.createdAt.toISOString()].map(csvEscape).join(','));
     });
     return lines.join('\n');
   }

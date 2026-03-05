@@ -121,10 +121,24 @@ enum InspectionScope {
   FLOOR
 }
 
+model Template {
+  id          String       @id @default(cuid())
+  key         TemplateType @unique
+  name        String
+  description String?
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  workspaces Workspace[]
+  plans      Plan[]
+}
+
 model Workspace {
   id               String          @id @default(cuid())
   name             String
   templateType     TemplateType
+  templateId       String?
   status           WorkspaceStatus @default(PENDING_OTP)
   planName         String          @default("Starter")
   billingStatus    BillingStatus   @default(ACTIVE)
@@ -135,6 +149,7 @@ model Workspace {
   ownerUserId     String?
   ownerVerifiedAt DateTime?
   owner           User?     @relation("WorkspaceOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  template        Template? @relation(fields: [templateId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -148,18 +163,25 @@ model Workspace {
   auditLogs     AuditLog[]
 
   // Apartment / Estate core
-  estates               Estate[]
-  units                 Unit[]
-  residents             Resident[]
-  requests              Request[]
-  properties            Property[]
-  notices               Notice[]
-  inspections           Inspection[]
-  requestMessages       RequestMessage[]
-  staffBlockAssignments StaffBlockAssignment[]
+  estates                  Estate[]
+  properties               Property[]
+  notices                  Notice[]
+  inspections              Inspection[]
+  staffBlockAssignments    StaffBlockAssignment[]
+  apartmentUnits           ApartmentUnit[]
+  apartmentResidents       ApartmentResident[]
+  apartmentRequests        ApartmentRequest[]
+  estateUnits              EstateUnit[]
+  estateResidents          EstateResident[]
+  estateRequests           EstateRequest[]
+  officeAssets             OfficeAsset[]
+  officeWorkOrders         OfficeWorkOrder[]
+  apartmentRequestMessages ApartmentRequestMessage[]
+  estateRequestMessages    EstateRequestMessage[]
 
   @@index([status])
   @@index([ownerUserId])
+  @@index([templateId])
   @@index([planName])
   @@index([billingStatus])
 }
@@ -287,6 +309,7 @@ model Subscription {
 
 model Plan {
   id            String       @id @default(cuid())
+  templateId    String
   name          String
   interval      PlanInterval
   amountPesewas Int
@@ -295,10 +318,12 @@ model Plan {
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
+  template      Template       @relation(fields: [templateId], references: [id], onDelete: Cascade)
   subscriptions Subscription[]
   payments      Payment[]
 
-  @@index([isActive])
+  @@unique([templateId, name, interval])
+  @@index([templateId, isActive])
 }
 
 model Payment {
@@ -373,105 +398,12 @@ model Estate {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  units     Unit[]
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  estateUnits EstateUnit[]
 
   @@unique([workspaceId, name])
   @@unique([workspaceId, code])
   @@index([workspaceId])
-}
-
-model Unit {
-  id          String     @id @default(cuid())
-  workspaceId String
-  estateId    String?
-  label       String
-  block       String?
-  floor       String?
-  status      UnitStatus @default(VACANT)
-
-  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  estate      Estate?      @relation(fields: [estateId], references: [id], onDelete: SetNull)
-  residents   Resident[]
-  requests    Request[]
-  inspections Inspection[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // ✅ Prevent duplicate units inside the same workspace by label
-  @@unique([workspaceId, label], name: "unit_workspace_label_unique")
-  @@index([workspaceId])
-  @@index([estateId])
-  @@index([workspaceId, status])
-  @@index([workspaceId, block, floor])
-}
-
-model Resident {
-  id          String         @id @default(cuid())
-  workspaceId String
-  unitId      String?
-  fullName    String
-  phone       String?
-  email       String?
-  role        ResidentRole   @default(TENANT)
-  status      ResidentStatus @default(ACTIVE)
-
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  unit      Unit?     @relation(fields: [unitId], references: [id], onDelete: SetNull)
-  requests  Request[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([workspaceId])
-  @@index([workspaceId, status])
-  @@index([unitId])
-}
-
-model Request {
-  id          String  @id @default(cuid())
-  workspaceId String
-  unitId      String
-  residentId  String?
-
-  title       String
-  description String?
-  photoUrl    String?
-  priority    RequestPriority @default(NORMAL)
-  status      RequestStatus   @default(PENDING)
-
-  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  unit      Unit             @relation(fields: [unitId], references: [id], onDelete: Cascade)
-  resident  Resident?        @relation(fields: [residentId], references: [id], onDelete: SetNull)
-  messages  RequestMessage[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([workspaceId])
-  @@index([workspaceId, status, createdAt])
-  @@index([workspaceId, residentId, createdAt])
-  @@index([unitId])
-  @@index([residentId])
-}
-
-model RequestMessage {
-  id           String   @id @default(cuid())
-  workspaceId  String
-  requestId    String
-  senderUserId String?
-  senderName   String
-  body         String
-  createdAt    DateTime @default(now())
-
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  request   Request   @relation(fields: [requestId], references: [id], onDelete: Cascade)
-
-  @@index([workspaceId])
-  @@index([requestId])
-  @@index([workspaceId, requestId, createdAt])
-  @@index([createdAt])
 }
 
 model Property {
@@ -520,10 +452,210 @@ model Inspection {
   updatedAt   DateTime         @updatedAt
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  unit      Unit?     @relation(fields: [unitId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId])
   @@index([workspaceId, scope, block, floor])
   @@index([unitId])
   @@index([dueDate])
+}
+
+// Template-separated physical tables (phase 2)
+model ApartmentUnit {
+  id          String     @id
+  workspaceId String
+  label       String
+  block       String?
+  floor       String?
+  status      UnitStatus @default(VACANT)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  workspace          Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  apartmentResidents ApartmentResident[]
+  apartmentRequests  ApartmentRequest[]
+
+  @@unique([workspaceId, label])
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+}
+
+model ApartmentResident {
+  id          String         @id
+  workspaceId String
+  unitId      String?
+  fullName    String
+  phone       String?
+  email       String?
+  role        ResidentRole   @default(TENANT)
+  status      ResidentStatus @default(ACTIVE)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  workspace         Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  unit              ApartmentUnit?     @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  apartmentRequests ApartmentRequest[]
+
+  @@index([workspaceId])
+  @@index([unitId])
+}
+
+model ApartmentRequest {
+  id          String          @id
+  workspaceId String
+  unitId      String
+  residentId  String?
+  title       String
+  description String?
+  photoUrl    String?
+  priority    RequestPriority @default(NORMAL)
+  status      RequestStatus   @default(PENDING)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  workspace Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  unit      ApartmentUnit             @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  resident  ApartmentResident?        @relation(fields: [residentId], references: [id], onDelete: SetNull)
+  messages  ApartmentRequestMessage[]
+
+  @@index([workspaceId])
+  @@index([unitId])
+  @@index([residentId])
+  @@index([workspaceId, status])
+}
+
+model EstateUnit {
+  id          String     @id
+  workspaceId String
+  estateId    String?
+  label       String
+  block       String?
+  floor       String?
+  status      UnitStatus @default(VACANT)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  workspace       Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  estate          Estate?          @relation(fields: [estateId], references: [id], onDelete: SetNull)
+  estateResidents EstateResident[]
+  estateRequests  EstateRequest[]
+
+  @@unique([workspaceId, label])
+  @@index([workspaceId])
+  @@index([estateId])
+}
+
+model EstateResident {
+  id          String         @id
+  workspaceId String
+  unitId      String?
+  fullName    String
+  phone       String?
+  email       String?
+  role        ResidentRole   @default(TENANT)
+  status      ResidentStatus @default(ACTIVE)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  unit           EstateUnit?     @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  estateRequests EstateRequest[]
+
+  @@index([workspaceId])
+  @@index([unitId])
+}
+
+model EstateRequest {
+  id          String          @id
+  workspaceId String
+  unitId      String
+  residentId  String?
+  title       String
+  description String?
+  photoUrl    String?
+  priority    RequestPriority @default(NORMAL)
+  status      RequestStatus   @default(PENDING)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  workspace Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  unit      EstateUnit             @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  resident  EstateResident?        @relation(fields: [residentId], references: [id], onDelete: SetNull)
+  messages  EstateRequestMessage[]
+
+  @@index([workspaceId])
+  @@index([unitId])
+  @@index([residentId])
+  @@index([workspaceId, status])
+}
+
+model ApartmentRequestMessage {
+  id           String   @id
+  workspaceId  String
+  requestId    String
+  senderUserId String?
+  senderName   String
+  body         String
+  createdAt    DateTime @default(now())
+
+  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  request   ApartmentRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([requestId])
+  @@index([workspaceId, requestId, createdAt])
+  @@index([createdAt])
+}
+
+model EstateRequestMessage {
+  id           String   @id
+  workspaceId  String
+  requestId    String
+  senderUserId String?
+  senderName   String
+  body         String
+  createdAt    DateTime @default(now())
+
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  request   EstateRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([requestId])
+  @@index([workspaceId, requestId, createdAt])
+  @@index([createdAt])
+}
+
+model OfficeAsset {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  category    String?
+  serialNo    String?
+  status      String   @default("ACTIVE")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace        Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  officeWorkOrders OfficeWorkOrder[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+}
+
+model OfficeWorkOrder {
+  id          String   @id @default(cuid())
+  workspaceId String
+  assetId     String?
+  title       String
+  description String?
+  status      String   @default("OPEN")
+  priority    String   @default("NORMAL")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  asset     OfficeAsset? @relation(fields: [assetId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([assetId])
+  @@index([workspaceId, status])
 }

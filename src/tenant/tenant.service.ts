@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { RequestPriority, RequestStatus, ResidentStatus } from '@prisma/client';
+import { RequestPriority, RequestStatus, ResidentStatus, TemplateType } from '@prisma/client';
+import { randomUUID } from 'crypto';
 
 @Injectable()
 export class TenantService {
@@ -49,29 +50,52 @@ export class TenantService {
   }
 
   private async getResidentContext(workspaceId: string, userId: string) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const [user, ws] = await Promise.all([
+      this.prisma.user.findUnique({ where: { id: userId } }),
+      this.prisma.workspace.findUnique({ where: { id: workspaceId } }),
+    ]);
     if (!user?.email) throw new UnauthorizedException('Tenant user email missing');
+    if (!ws) throw new NotFoundException('Workspace not found');
+    if (ws.templateType !== TemplateType.APARTMENT && ws.templateType !== TemplateType.ESTATE) {
+      throw new BadRequestException('Tenant module is enabled only for property templates');
+    }
 
-    const resident = await this.prisma.resident.findFirst({
-      where: {
-        workspaceId,
-        email: { equals: user.email.trim(), mode: 'insensitive' },
-        status: ResidentStatus.ACTIVE,
-      },
-      include: { unit: { select: { id: true, label: true, block: true, floor: true } } },
-    });
+    const resident = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateResident.findFirst({
+          where: {
+            workspaceId,
+            email: { equals: user.email.trim(), mode: 'insensitive' },
+            status: ResidentStatus.ACTIVE,
+          },
+          include: { unit: { select: { id: true, label: true, block: true, floor: true } } },
+        })
+      : await this.prisma.apartmentResident.findFirst({
+          where: {
+            workspaceId,
+            email: { equals: user.email.trim(), mode: 'insensitive' },
+            status: ResidentStatus.ACTIVE,
+          },
+          include: { unit: { select: { id: true, label: true, block: true, floor: true } } },
+        });
+
     if (!resident) throw new NotFoundException('No resident profile found for this tenant in workspace');
-    return { user, resident };
+    return { user, resident, ws };
   }
 
   async dashboard(workspaceId: string, userId: string) {
-    const { resident } = await this.getResidentContext(workspaceId, userId);
+    const { resident, ws } = await this.getResidentContext(workspaceId, userId);
 
-    const myRequests = await this.prisma.request.findMany({
-      where: { workspaceId, residentId: resident.id },
-      orderBy: { createdAt: 'desc' },
-      take: 20,
-    });
+    const myRequests = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateRequest.findMany({
+          where: { workspaceId, residentId: resident.id },
+          orderBy: { createdAt: 'desc' },
+          take: 20,
+        })
+      : await this.prisma.apartmentRequest.findMany({
+          where: { workspaceId, residentId: resident.id },
+          orderBy: { createdAt: 'desc' },
+          take: 20,
+        });
 
     const notices = await this.prisma.notice.findMany({
       where: { workspaceId, audience: { in: ['ALL', 'RESIDENTS'] as any } },
@@ -98,19 +122,22 @@ export class TenantService {
   }
 
   async listMyRequests(workspaceId: string, userId: string) {
-    const { resident } = await this.getResidentContext(workspaceId, userId);
-    return this.prisma.request.findMany({
-      where: { workspaceId, residentId: resident.id },
-      include: {
-        unit: { select: { id: true, label: true } },
-        messages: {
+    const { resident, ws } = await this.getResidentContext(workspaceId, userId);
+    return ws.templateType === TemplateType.ESTATE
+      ? this.prisma.estateRequest.findMany({
+          where: { workspaceId, residentId: resident.id },
+          include: {
+            unit: { select: { id: true, label: true } },
+          },
           orderBy: { createdAt: 'desc' },
-          take: 1,
-          select: { id: true, body: true, senderName: true, createdAt: true },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        })
+      : this.prisma.apartmentRequest.findMany({
+          where: { workspaceId, residentId: resident.id },
+          include: {
+            unit: { select: { id: true, label: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+        });
   }
 
   async createMyRequest(
@@ -118,32 +145,47 @@ export class TenantService {
     userId: string,
     dto: { title: string; description?: string; priority?: RequestPriority; photoUrl?: string },
   ) {
-    const { resident } = await this.getResidentContext(workspaceId, userId);
+    const { resident, ws } = await this.getResidentContext(workspaceId, userId);
     if (!resident.unitId) throw new BadRequestException('Resident has no assigned unit');
 
-    const created = await this.prisma.request.create({
-      data: {
-        workspaceId,
-        unitId: resident.unitId,
-        residentId: resident.id,
-        title: dto.title.trim(),
-        description: dto.description?.trim() || null,
-        photoUrl: dto.photoUrl?.trim() || null,
-        priority: dto.priority || RequestPriority.NORMAL,
-      },
-      include: { unit: { select: { id: true, label: true } } },
-    });
+    const created = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateRequest.create({
+          data: {
+            id: randomUUID(),
+            workspaceId,
+            unitId: resident.unitId,
+            residentId: resident.id,
+            title: dto.title.trim(),
+            description: dto.description?.trim() || null,
+            photoUrl: dto.photoUrl?.trim() || null,
+            priority: dto.priority || RequestPriority.NORMAL,
+          },
+          include: { unit: { select: { id: true, label: true } } },
+        })
+      : await this.prisma.apartmentRequest.create({
+          data: {
+            id: randomUUID(),
+            workspaceId,
+            unitId: resident.unitId,
+            residentId: resident.id,
+            title: dto.title.trim(),
+            description: dto.description?.trim() || null,
+            photoUrl: dto.photoUrl?.trim() || null,
+            priority: dto.priority || RequestPriority.NORMAL,
+          },
+          include: { unit: { select: { id: true, label: true } } },
+        });
 
     try {
-      const ws = await this.prisma.workspace.findUnique({
+      const workspace = await this.prisma.workspace.findUnique({
         where: { id: workspaceId },
         include: { owner: { select: { email: true, fullName: true } } },
       });
-      const ownerEmail = ws?.owner?.email?.toLowerCase();
+      const ownerEmail = workspace?.owner?.email?.toLowerCase();
       if (ownerEmail) {
         await this.sendEmail({
           to: ownerEmail,
-          subject: `New tenant request • ${ws?.name || 'Workspace'}`,
+          subject: `New tenant request • ${workspace?.name || 'Workspace'}`,
           html: `<p>A tenant submitted a new request.</p><p><b>Resident:</b> ${resident.fullName}</p><p><b>Unit:</b> ${created.unit?.label || '-'}</p><p><b>Title:</b> ${created.title}</p>`,
         });
       }
@@ -162,33 +204,48 @@ export class TenantService {
   }
 
   async listMyRequestMessages(workspaceId: string, userId: string, requestId: string) {
-    const { resident } = await this.getResidentContext(workspaceId, userId);
-    const req = await this.prisma.request.findFirst({ where: { id: requestId, workspaceId, residentId: resident.id } });
+    const { resident, ws } = await this.getResidentContext(workspaceId, userId);
+    const req = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateRequest.findFirst({ where: { id: requestId, workspaceId, residentId: resident.id } })
+      : await this.prisma.apartmentRequest.findFirst({ where: { id: requestId, workspaceId, residentId: resident.id } });
     if (!req) throw new NotFoundException('Request not found');
 
-    return this.prisma.requestMessage.findMany({
-      where: { workspaceId, requestId },
-      orderBy: { createdAt: 'asc' },
-    });
+    return ws.templateType === TemplateType.ESTATE
+      ? this.prisma.estateRequestMessage.findMany({ where: { workspaceId, requestId }, orderBy: { createdAt: 'asc' } })
+      : this.prisma.apartmentRequestMessage.findMany({ where: { workspaceId, requestId }, orderBy: { createdAt: 'asc' } });
   }
 
   async addMyRequestMessage(workspaceId: string, userId: string, requestId: string, body: string) {
-    const { resident, user } = await this.getResidentContext(workspaceId, userId);
-    const req = await this.prisma.request.findFirst({ where: { id: requestId, workspaceId, residentId: resident.id } });
+    const { resident, user, ws } = await this.getResidentContext(workspaceId, userId);
+    const req = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateRequest.findFirst({ where: { id: requestId, workspaceId, residentId: resident.id } })
+      : await this.prisma.apartmentRequest.findFirst({ where: { id: requestId, workspaceId, residentId: resident.id } });
     if (!req) throw new NotFoundException('Request not found');
 
     const text = String(body || '').trim();
     if (!text) throw new BadRequestException('Message body is required');
 
-    const msg = await this.prisma.requestMessage.create({
-      data: {
-        workspaceId,
-        requestId,
-        senderUserId: user.id,
-        senderName: user.fullName || user.email || resident.fullName,
-        body: text,
-      },
-    });
+    const msg = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateRequestMessage.create({
+          data: {
+            id: randomUUID(),
+            workspaceId,
+            requestId,
+            senderUserId: user.id,
+            senderName: user.fullName || user.email || resident.fullName,
+            body: text,
+          },
+        })
+      : await this.prisma.apartmentRequestMessage.create({
+          data: {
+            id: randomUUID(),
+            workspaceId,
+            requestId,
+            senderUserId: user.id,
+            senderName: user.fullName || user.email || resident.fullName,
+            body: text,
+          },
+        });
 
     try {
       const ws = await this.prisma.workspace.findUnique({

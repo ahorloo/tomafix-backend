@@ -5,6 +5,7 @@ import {
   PaymentStatus,
   PlanInterval,
   SubscriptionStatus,
+  TemplateType,
   WorkspaceStatus,
 } from '@prisma/client';
 import { createHmac, randomUUID } from 'crypto';
@@ -55,78 +56,127 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
     this.dunningTimer = null;
   }
 
-  async listPlans() {
-    let plans = await this.prisma.plan.findMany({
-      where: { isActive: true },
-      orderBy: [{ interval: 'asc' }, { amountPesewas: 'asc' }],
-    });
-
-    // Auto-bootstrap default plans if DB was reset/emptied.
-    if (!plans.length) {
-      await this.prisma.plan.createMany({
-        data: [
-          { name: 'Starter', interval: PlanInterval.MONTHLY, amountPesewas: 7900, currency: 'GHS', isActive: true },
-          { name: 'Growth', interval: PlanInterval.MONTHLY, amountPesewas: 14900, currency: 'GHS', isActive: true },
-          { name: 'TomaPrime', interval: PlanInterval.MONTHLY, amountPesewas: 29900, currency: 'GHS', isActive: true },
-        ],
-        skipDuplicates: true,
-      });
-
-      plans = await this.prisma.plan.findMany({
-        where: { isActive: true },
-        orderBy: [{ interval: 'asc' }, { amountPesewas: 'asc' }],
-      });
-    }
-
-    // Enrich with user-facing copy (kept server-side so frontend stays simple)
-    const copy: Record<
-      string,
-      { summary: string; priceText: string; bullets: string[] }
-    > = {
-      Starter: {
-        summary: 'For small apartment buildings',
-        priceText: 'GH₵ 129 / month',
-        bullets: [
-          '1 property',
-          'Up to 20 units',
-          'Requests + residents management',
-          'No Blocks (single-building setup)',
-        ],
+  async listPlans(templateType?: TemplateType) {
+    const templateCopy: Record<TemplateType, Record<string, { summary: string; priceText: string; bullets: string[] }>> = {
+      APARTMENT: {
+        Starter: {
+          summary: 'For small apartment buildings',
+          priceText: 'GH₵ 79 / month',
+          bullets: ['1 building', 'Up to 20 units', 'Requests + residents management'],
+        },
+        Growth: {
+          summary: 'For growing apartments',
+          priceText: 'GH₵ 149 / month',
+          bullets: ['Up to 3 blocks/properties', 'Up to 120 units', 'Staff + basic reports'],
+        },
+        'Toma Prime': {
+          summary: 'For large apartment operations',
+          priceText: 'GH₵ 299 / month',
+          bullets: ['Up to 5 properties', 'Up to 250 units', 'Advanced reports + exports'],
+        },
       },
-      Growth: {
-        summary: 'For growing apartments & small managers',
-        priceText: 'GH₵ 249 / month',
-        bullets: [
-          'Up to 3 properties',
-          'Up to 120 total units',
-          'Blocks enabled (Block A / B / C)',
-          'Staff assignment + basic reports',
-        ],
+      ESTATE: {
+        Starter: {
+          summary: 'For small estates',
+          priceText: 'GH₵ 129 / month',
+          bullets: ['1 property', 'Up to 40 units', 'Central request tracking'],
+        },
+        Growth: {
+          summary: 'For growing multi-property portfolios',
+          priceText: 'GH₵ 249 / month',
+          bullets: ['Up to 5 properties', 'Up to 180 units', 'Managers per property'],
+        },
+        'Toma Prime': {
+          summary: 'For premium estate operations',
+          priceText: 'GH₵ 499 / month',
+          bullets: ['Up to 12 properties', 'Up to 500 units', 'Advanced analytics + priority support'],
+        },
       },
-      TomaPrime: {
-        summary: 'For large apartments & premium teams',
-        priceText: 'GH₵ 499 / month',
-        bullets: [
-          'Up to 5 properties',
-          'Up to 250 total units',
-          'Blocks enabled',
-          'Advanced reports + exports',
-          'Priority support',
-          'Early access to new features',
-        ],
+      OFFICE: {
+        Starter: {
+          summary: 'For small office facilities',
+          priceText: 'GH₵ 99 / month',
+          bullets: ['Basic work orders', 'Asset register', 'Inspection schedules'],
+        },
+        Growth: {
+          summary: 'For scaling office operations',
+          priceText: 'GH₵ 199 / month',
+          bullets: ['Departments + SLAs', 'Team assignments', 'Operational reports'],
+        },
+        'Toma Prime': {
+          summary: 'For enterprise office operations',
+          priceText: 'GH₵ 399 / month',
+          bullets: ['Multi-site offices', 'Advanced workflows', 'Priority support'],
+        },
       },
     };
 
+    const templates = await this.prisma.template.findMany({
+      where: templateType ? { key: templateType } : { isActive: true },
+      select: { id: true, key: true },
+    });
+
+    if (!templates.length) return [];
+
+    // Auto-bootstrap per-template plans if missing
+    for (const t of templates) {
+      const count = await this.prisma.plan.count({ where: { templateId: t.id } });
+      if (count > 0) continue;
+
+      const defaults =
+        t.key === 'APARTMENT'
+          ? [
+              { name: 'Starter', amountPesewas: 7900 },
+              { name: 'Growth', amountPesewas: 14900 },
+              { name: 'Toma Prime', amountPesewas: 29900 },
+            ]
+          : t.key === 'ESTATE'
+            ? [
+                { name: 'Starter', amountPesewas: 12900 },
+                { name: 'Growth', amountPesewas: 24900 },
+                { name: 'Toma Prime', amountPesewas: 49900 },
+              ]
+            : [
+                { name: 'Starter', amountPesewas: 9900 },
+                { name: 'Growth', amountPesewas: 19900 },
+                { name: 'Toma Prime', amountPesewas: 39900 },
+              ];
+
+      for (const p of defaults) {
+        await this.prisma.plan.upsert({
+          where: { templateId_name_interval: { templateId: t.id, name: p.name, interval: PlanInterval.MONTHLY } },
+          update: { amountPesewas: p.amountPesewas, currency: 'GHS', isActive: true },
+          create: {
+            templateId: t.id,
+            name: p.name,
+            interval: PlanInterval.MONTHLY,
+            amountPesewas: p.amountPesewas,
+            currency: 'GHS',
+            isActive: true,
+          },
+        });
+      }
+    }
+
+    const plans = await this.prisma.plan.findMany({
+      where: {
+        isActive: true,
+        template: templateType ? { key: templateType } : undefined,
+      },
+      include: { template: { select: { key: true } } },
+      orderBy: [{ amountPesewas: 'asc' }],
+    });
+
     return plans.map((p) => ({
       ...p,
-      ui: copy[p.name] ?? null,
+      ui: templateCopy[p.template.key]?.[p.name] ?? null,
     }));
   }
 
   async initPaystackPayment(dto: { workspaceId: string; planId: string }) {
     const workspace = await this.prisma.workspace.findUnique({
       where: { id: dto.workspaceId },
-      include: { owner: true },
+      include: { owner: true, template: true },
     });
 
     if (!workspace) throw new BadRequestException('Workspace not found');
@@ -141,8 +191,13 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    const plan = await this.prisma.plan.findUnique({ where: { id: dto.planId } });
+    const plan = await this.prisma.plan.findUnique({ where: { id: dto.planId }, include: { template: true } });
     if (!plan || !plan.isActive) throw new BadRequestException('Plan not found or inactive');
+
+    const workspaceTemplate = workspace.template?.key || workspace.templateType;
+    if (plan.template.key !== workspaceTemplate) {
+      throw new BadRequestException(`Selected plan does not belong to workspace template ${workspaceTemplate}`);
+    }
 
     const reference = `tf_${randomUUID()}`;
     const overrideCurrency = process.env.PAYSTACK_CURRENCY_OVERRIDE?.trim().toUpperCase();
@@ -218,7 +273,7 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
   async initMockPayment(dto: { workspaceId: string; planId: string }) {
     const workspace = await this.prisma.workspace.findUnique({
       where: { id: dto.workspaceId },
-      include: { owner: true },
+      include: { owner: true, template: true },
     });
 
     if (!workspace) throw new BadRequestException('Workspace not found');
@@ -230,8 +285,13 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    const plan = await this.prisma.plan.findUnique({ where: { id: dto.planId } });
+    const plan = await this.prisma.plan.findUnique({ where: { id: dto.planId }, include: { template: true } });
     if (!plan || !plan.isActive) throw new BadRequestException('Plan not found or inactive');
+
+    const workspaceTemplate = workspace.template?.key || workspace.templateType;
+    if (plan.template.key !== workspaceTemplate) {
+      throw new BadRequestException(`Selected plan does not belong to workspace template ${workspaceTemplate}`);
+    }
 
     const reference = `mock_${randomUUID()}`;
 
@@ -561,8 +621,15 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
   }
 
   async changeWorkspacePlan(workspaceId: string, planId: string) {
-    const plan = await this.prisma.plan.findUnique({ where: { id: planId } });
+    const plan = await this.prisma.plan.findUnique({ where: { id: planId }, include: { template: true } });
     if (!plan || !plan.isActive) throw new BadRequestException('Plan not found or inactive');
+
+    const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId }, include: { template: true } });
+    if (!ws) throw new NotFoundException('Workspace not found');
+    const workspaceTemplate = ws.template?.key || ws.templateType;
+    if (plan.template.key !== workspaceTemplate) {
+      throw new BadRequestException(`Plan does not belong to workspace template ${workspaceTemplate}`);
+    }
 
     await this.prisma.auditLog.create({
       data: {
@@ -581,6 +648,55 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       requiresPayment: true,
       ...checkout,
     };
+  }
+
+  async listTemplatePlans(templateType?: TemplateType) {
+    return this.listPlans(templateType);
+  }
+
+  async updateTemplatePlanPrice(input: {
+    templateType: TemplateType;
+    planName: string;
+    interval?: PlanInterval;
+    amountPesewas: number;
+    currency?: string;
+    isActive?: boolean;
+  }) {
+    const template = await this.prisma.template.findUnique({ where: { key: input.templateType } });
+    if (!template) throw new NotFoundException('Template not found');
+
+    const interval = input.interval ?? PlanInterval.MONTHLY;
+    const planName = input.planName.trim();
+    if (!planName) throw new BadRequestException('planName is required');
+    if (!Number.isFinite(input.amountPesewas) || input.amountPesewas <= 0) {
+      throw new BadRequestException('amountPesewas must be a positive number');
+    }
+
+    const plan = await this.prisma.plan.upsert({
+      where: {
+        templateId_name_interval: {
+          templateId: template.id,
+          name: planName,
+          interval,
+        },
+      },
+      update: {
+        amountPesewas: Math.round(input.amountPesewas),
+        currency: (input.currency || 'GHS').toUpperCase(),
+        isActive: input.isActive ?? true,
+      },
+      create: {
+        templateId: template.id,
+        name: planName,
+        interval,
+        amountPesewas: Math.round(input.amountPesewas),
+        currency: (input.currency || 'GHS').toUpperCase(),
+        isActive: input.isActive ?? true,
+      },
+      include: { template: { select: { key: true } } },
+    });
+
+    return { ok: true, plan };
   }
 
   async retryLatestPayment(workspaceId: string) {
