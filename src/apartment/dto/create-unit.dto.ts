@@ -8,6 +8,10 @@ export class CreateUnitDto {
 
   @IsOptional()
   @IsString()
+  estateId?: string;
+
+  @IsOptional()
+  @IsString()
   block?: string;
 
   @IsOptional()

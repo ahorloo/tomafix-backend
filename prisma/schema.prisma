@@ -5,8 +5,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider          = "postgresql"
+  url               = env("DATABASE_URL")
   shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
@@ -122,19 +122,19 @@ enum InspectionScope {
 }
 
 model Workspace {
-  id           String          @id @default(cuid())
-  name         String
-  templateType TemplateType
-  status       WorkspaceStatus @default(PENDING_OTP)
-  planName     String          @default("Starter")
-  billingStatus BillingStatus  @default(ACTIVE)
-  nextRenewal  DateTime?
+  id               String          @id @default(cuid())
+  name             String
+  templateType     TemplateType
+  status           WorkspaceStatus @default(PENDING_OTP)
+  planName         String          @default("Starter")
+  billingStatus    BillingStatus   @default(ACTIVE)
+  nextRenewal      DateTime?
   permissionPolicy Json?
 
   // Workspace owner (created during onboarding)
   ownerUserId     String?
   ownerVerifiedAt DateTime?
-  owner           User? @relation("WorkspaceOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  owner           User?     @relation("WorkspaceOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -147,14 +147,15 @@ model Workspace {
   webhookEvents WebhookEvent[]
   auditLogs     AuditLog[]
 
-  // Apartment core
-  units     Unit[]
-  residents Resident[]
-  requests  Request[]
-  properties Property[]
-  notices   Notice[]
-  inspections Inspection[]
-  requestMessages RequestMessage[]
+  // Apartment / Estate core
+  estates               Estate[]
+  units                 Unit[]
+  residents             Resident[]
+  requests              Request[]
+  properties            Property[]
+  notices               Notice[]
+  inspections           Inspection[]
+  requestMessages       RequestMessage[]
   staffBlockAssignments StaffBlockAssignment[]
 
   @@index([status])
@@ -176,10 +177,10 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  memberships     WorkspaceMember[]
-  ownedWorkspaces Workspace[] @relation("WorkspaceOwner")
-  otps            OtpCode[]
-  auditLogs       AuditLog[]
+  memberships           WorkspaceMember[]
+  ownedWorkspaces       Workspace[]            @relation("WorkspaceOwner")
+  otps                  OtpCode[]
+  auditLogs             AuditLog[]
   staffBlockAssignments StaffBlockAssignment[]
 }
 
@@ -245,7 +246,7 @@ model OtpCode {
   expiresAt DateTime
 
   consumedAt DateTime?
-  createdAt  DateTime @default(now())
+  createdAt  DateTime  @default(now())
 
   workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -259,9 +260,9 @@ model OtpCode {
 }
 
 model Subscription {
-  id          String           @id @default(cuid())
+  id          String          @id @default(cuid())
   workspaceId String
-  provider    BillingProvider  @default(PAYSTACK)
+  provider    BillingProvider @default(PAYSTACK)
 
   // Paystack subscription identity
   customerCode     String?
@@ -335,7 +336,7 @@ model WebhookEvent {
   workspaceId String?
   provider    BillingProvider @default(PAYSTACK)
 
-  eventId   String @unique
+  eventId   String  @unique
   eventType String
   reference String?
 
@@ -363,15 +364,34 @@ model AuditLog {
   @@index([actorUserId])
 }
 
+model Estate {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  code        String?
+  location    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  units     Unit[]
+
+  @@unique([workspaceId, name])
+  @@unique([workspaceId, code])
+  @@index([workspaceId])
+}
+
 model Unit {
   id          String     @id @default(cuid())
   workspaceId String
+  estateId    String?
   label       String
   block       String?
   floor       String?
   status      UnitStatus @default(VACANT)
 
   workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  estate      Estate?      @relation(fields: [estateId], references: [id], onDelete: SetNull)
   residents   Resident[]
   requests    Request[]
   inspections Inspection[]
@@ -379,12 +399,12 @@ model Unit {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([workspaceId])
-  @@index([workspaceId, status])
-  @@index([workspaceId, block, floor])
-
   // ✅ Prevent duplicate units inside the same workspace by label
   @@unique([workspaceId, label], name: "unit_workspace_label_unique")
+  @@index([workspaceId])
+  @@index([estateId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, block, floor])
 }
 
 model Resident {
@@ -410,7 +430,7 @@ model Resident {
 }
 
 model Request {
-  id          String          @id @default(cuid())
+  id          String  @id @default(cuid())
   workspaceId String
   unitId      String
   residentId  String?
@@ -421,9 +441,9 @@ model Request {
   priority    RequestPriority @default(NORMAL)
   status      RequestStatus   @default(PENDING)
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  unit      Unit      @relation(fields: [unitId], references: [id], onDelete: Cascade)
-  resident  Resident? @relation(fields: [residentId], references: [id], onDelete: SetNull)
+  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  unit      Unit             @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  resident  Resident?        @relation(fields: [residentId], references: [id], onDelete: SetNull)
   messages  RequestMessage[]
 
   createdAt DateTime @default(now())
@@ -463,19 +483,19 @@ model Property {
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  @@index([workspaceId])
   @@unique([workspaceId, name])
+  @@index([workspaceId])
 }
 
 model Notice {
-  id          String        @id @default(cuid())
+  id          String         @id @default(cuid())
   workspaceId String
   title       String
   body        String
   audience    NoticeAudience @default(ALL)
   seenBy      Json?
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 

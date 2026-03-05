@@ -15,6 +15,7 @@ import { ApartmentService } from './apartment.service';
 import { CreateUnitDto } from './dto/create-unit.dto';
 import { CreateResidentDto } from './dto/create-resident.dto';
 import { CreateRequestDto } from './dto/create-request.dto';
+import { CreateEstateDto } from './dto/create-estate.dto';
 import { AuthGuard } from '../auth/auth.guard';
 import { WorkspaceAccessGuard } from '../auth/workspace-access.guard';
 import { WorkspaceRoles } from '../auth/workspace-roles.decorator';
@@ -29,15 +30,53 @@ export class ApartmentController {
 
   @WorkspacePermission('dashboard:view')
   @Get('dashboard')
-  getDashboard(@Param('workspaceId') workspaceId: string) {
-    return this.apartment.getDashboard(workspaceId);
+  getDashboard(@Param('workspaceId') workspaceId: string, @Query('estateId') estateId?: string) {
+    return this.apartment.getDashboard(workspaceId, estateId);
+  }
+
+  // Estates (multi-property)
+  @WorkspacePermission('units:view')
+  @Get('estates')
+  listEstates(@Param('workspaceId') workspaceId: string) {
+    return this.apartment.listEstates(workspaceId);
+  }
+
+  @WorkspacePermission('units:manage')
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF)
+  @Post('estates')
+  createEstate(@Param('workspaceId') workspaceId: string, @Body() dto: CreateEstateDto) {
+    return this.apartment.createEstate(workspaceId, dto);
+  }
+
+  @WorkspacePermission('units:manage')
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF)
+  @Patch('estates/:estateId')
+  updateEstate(
+    @Param('workspaceId') workspaceId: string,
+    @Param('estateId') estateId: string,
+    @Body() dto: Partial<CreateEstateDto>,
+  ) {
+    return this.apartment.updateEstate(workspaceId, estateId, dto);
+  }
+
+  @WorkspacePermission('units:manage')
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
+  @Delete('estates/:estateId')
+  deleteEstate(@Param('workspaceId') workspaceId: string, @Param('estateId') estateId: string) {
+    return this.apartment.deleteEstate(workspaceId, estateId);
+  }
+
+  @WorkspacePermission('units:view')
+  @Get('estates/:estateId/units')
+  listEstateUnits(@Param('workspaceId') workspaceId: string, @Param('estateId') estateId: string, @Req() req: any) {
+    return this.apartment.listUnits(workspaceId, req.authUserId, estateId);
   }
 
   // Units
   @WorkspacePermission('units:view')
   @Get('units')
-  listUnits(@Param('workspaceId') workspaceId: string, @Req() req: any) {
-    return this.apartment.listUnits(workspaceId, req.authUserId);
+  listUnits(@Param('workspaceId') workspaceId: string, @Req() req: any, @Query('estateId') estateId?: string) {
+    return this.apartment.listUnits(workspaceId, req.authUserId, estateId);
   }
 
   @WorkspacePermission('units:manage')

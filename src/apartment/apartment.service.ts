@@ -15,6 +15,7 @@ import { getEntitlements, resolvePlanName } from '../billing/planConfig';
 import { CreateUnitDto } from './dto/create-unit.dto';
 import { CreateResidentDto } from './dto/create-resident.dto';
 import { CreateRequestDto } from './dto/create-request.dto';
+import { CreateEstateDto } from './dto/create-estate.dto';
 
 @Injectable()
 export class ApartmentService {
@@ -65,13 +66,44 @@ export class ApartmentService {
     }
   }
 
-  private async assertApartmentWorkspace(workspaceId: string) {
+  private async assertPropertyWorkspace(workspaceId: string) {
     const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
     if (!ws) throw new NotFoundException('Workspace not found');
-    if (ws.templateType !== TemplateType.APARTMENT) {
-      throw new BadRequestException('Workspace is not an APARTMENT template');
+    if (ws.templateType !== TemplateType.APARTMENT && ws.templateType !== TemplateType.ESTATE) {
+      throw new BadRequestException('Workspace is not a property template');
     }
     return ws;
+  }
+
+  private async assertEstateWorkspace(workspaceId: string) {
+    const ws = await this.assertPropertyWorkspace(workspaceId);
+    if (ws.templateType !== TemplateType.ESTATE) {
+      throw new BadRequestException('Workspace is not an ESTATE template');
+    }
+    return ws;
+  }
+
+  private async resolveEstateIdForWorkspace(workspaceId: string, estateId?: string | null) {
+    const ws = await this.assertPropertyWorkspace(workspaceId);
+    if (ws.templateType !== TemplateType.ESTATE) return null;
+
+    if (estateId) {
+      const estate = await this.prisma.estate.findFirst({ where: { id: estateId, workspaceId } });
+      if (!estate) throw new BadRequestException('estateId does not belong to this workspace');
+      return estate.id;
+    }
+
+    const existing = await this.prisma.estate.findFirst({ where: { workspaceId }, orderBy: { createdAt: 'asc' } });
+    if (existing) return existing.id;
+
+    const created = await this.prisma.estate.create({
+      data: {
+        workspaceId,
+        name: 'Main Estate',
+        code: 'MAIN',
+      },
+    });
+    return created.id;
   }
 
   private async assertUnitsPlanLimit(workspaceId: string) {
@@ -92,18 +124,19 @@ export class ApartmentService {
     }
   }
 
-  async getDashboard(workspaceId: string) {
-    await this.assertApartmentWorkspace(workspaceId);
+  async getDashboard(workspaceId: string, estateId?: string) {
+    await this.assertPropertyWorkspace(workspaceId);
+    const resolvedEstateId = await this.resolveEstateIdForWorkspace(workspaceId, estateId);
 
     const [unitBuckets, requestBuckets] = await Promise.all([
       this.prisma.unit.groupBy({
         by: ['status'],
-        where: { workspaceId },
+        where: { workspaceId, ...(resolvedEstateId ? { estateId: resolvedEstateId } : {}) },
         _count: { _all: true },
       }),
       this.prisma.request.groupBy({
         by: ['status'],
-        where: { workspaceId, status: { in: [RequestStatus.PENDING, RequestStatus.IN_PROGRESS] } },
+        where: { workspaceId, status: { in: [RequestStatus.PENDING, RequestStatus.IN_PROGRESS] }, ...(resolvedEstateId ? { unit: { estateId: resolvedEstateId } } : {}) },
         _count: { _all: true },
       }),
     ]);
@@ -117,7 +150,7 @@ export class ApartmentService {
     const inProgressRequests = requestBuckets.find((row) => row.status === RequestStatus.IN_PROGRESS)?._count._all ?? 0;
 
     const recentRequests = await this.prisma.request.findMany({
-      where: { workspaceId },
+      where: { workspaceId, ...(resolvedEstateId ? { unit: { estateId: resolvedEstateId } } : {}) },
       orderBy: { createdAt: 'desc' },
       take: 6,
       include: {
@@ -142,6 +175,86 @@ export class ApartmentService {
     };
   }
 
+  async listEstates(workspaceId: string) {
+    await this.assertEstateWorkspace(workspaceId);
+
+    const estates = await this.prisma.estate.findMany({
+      where: { workspaceId },
+      orderBy: [{ createdAt: 'asc' }],
+      include: {
+        _count: {
+          select: { units: true },
+        },
+      },
+    });
+
+    if (estates.length > 0) return estates;
+
+    const created = await this.prisma.estate.create({
+      data: { workspaceId, name: 'Main Estate', code: 'MAIN' },
+      include: { _count: { select: { units: true } } },
+    });
+    return [created];
+  }
+
+  async createEstate(workspaceId: string, dto: CreateEstateDto) {
+    await this.assertEstateWorkspace(workspaceId);
+
+    try {
+      return await this.prisma.estate.create({
+        data: {
+          workspaceId,
+          name: dto.name.trim(),
+          code: dto.code?.trim() || null,
+          location: dto.location?.trim() || null,
+        },
+      });
+    } catch (e: unknown) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new ConflictException('Estate name/code already exists in this workspace');
+      }
+      throw e;
+    }
+  }
+
+  async updateEstate(workspaceId: string, estateId: string, dto: Partial<CreateEstateDto>) {
+    await this.assertEstateWorkspace(workspaceId);
+
+    const estate = await this.prisma.estate.findFirst({ where: { id: estateId, workspaceId } });
+    if (!estate) throw new NotFoundException('Estate not found');
+
+    try {
+      return await this.prisma.estate.update({
+        where: { id: estateId },
+        data: {
+          name: dto.name !== undefined ? dto.name.trim() : undefined,
+          code: dto.code !== undefined ? (dto.code?.trim() || null) : undefined,
+          location: dto.location !== undefined ? (dto.location?.trim() || null) : undefined,
+        },
+      });
+    } catch (e: unknown) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new ConflictException('Estate name/code already exists in this workspace');
+      }
+      throw e;
+    }
+  }
+
+  async deleteEstate(workspaceId: string, estateId: string) {
+    await this.assertEstateWorkspace(workspaceId);
+
+    const estate = await this.prisma.estate.findFirst({ where: { id: estateId, workspaceId } });
+    if (!estate) throw new NotFoundException('Estate not found');
+
+    const unitCount = await this.prisma.unit.count({ where: { workspaceId, estateId } });
+    if (unitCount > 0) {
+      throw new BadRequestException('Cannot delete estate: units are assigned to it');
+    }
+
+    await this.prisma.estate.delete({ where: { id: estateId } });
+    return { ok: true };
+  }
+
   private async getStaffBlockScope(workspaceId: string, actorUserId?: string) {
     if (!actorUserId) return null;
 
@@ -161,34 +274,45 @@ export class ApartmentService {
     return normalized;
   }
 
-  async listUnits(workspaceId: string, actorUserId?: string) {
-    await this.assertApartmentWorkspace(workspaceId);
+  async listUnits(workspaceId: string, actorUserId?: string, estateId?: string) {
+    await this.assertPropertyWorkspace(workspaceId);
     const staffBlocks = await this.getStaffBlockScope(workspaceId, actorUserId);
+    const resolvedEstateId = await this.resolveEstateIdForWorkspace(workspaceId, estateId);
+
     return this.prisma.unit.findMany({
       where: {
         workspaceId,
+        ...(resolvedEstateId ? { estateId: resolvedEstateId } : {}),
         ...(staffBlocks ? { block: { in: staffBlocks } } : {}),
+      },
+      include: {
+        estate: { select: { id: true, name: true, code: true } },
       },
       orderBy: [{ block: 'asc' }, { floor: 'asc' }, { label: 'asc' }],
     });
   }
 
   async createUnit(workspaceId: string, dto: CreateUnitDto) {
-    await this.assertApartmentWorkspace(workspaceId);
+    await this.assertPropertyWorkspace(workspaceId);
     await this.assertUnitsPlanLimit(workspaceId);
 
     const label = dto.label.trim();
     const block = dto.block?.trim() || null;
     const floor = dto.floor?.trim() || null;
+    const estateId = await this.resolveEstateIdForWorkspace(workspaceId, dto.estateId);
 
     try {
       return await this.prisma.unit.create({
         data: {
           workspaceId,
+          estateId,
           label,
           block,
           floor,
           status: dto.status ?? UnitStatus.VACANT,
+        },
+        include: {
+          estate: { select: { id: true, name: true, code: true } },
         },
       });
     } catch (e: unknown) {
@@ -206,7 +330,7 @@ export class ApartmentService {
   }
 
   async updateUnit(workspaceId: string, unitId: string, dto: Partial<CreateUnitDto>) {
-    await this.assertApartmentWorkspace(workspaceId);
+    await this.assertPropertyWorkspace(workspaceId);
 
     const unit = await this.prisma.unit.findFirst({ where: { id: unitId, workspaceId } });
     if (!unit) throw new NotFoundException('Unit not found');
@@ -215,14 +339,22 @@ export class ApartmentService {
       throw new BadRequestException('label cannot be empty');
     }
 
+    const estateId = dto.estateId !== undefined
+      ? await this.resolveEstateIdForWorkspace(workspaceId, dto.estateId || null)
+      : undefined;
+
     try {
       return await this.prisma.unit.update({
         where: { id: unitId },
         data: {
+          estateId,
           label: dto.label !== undefined ? dto.label.trim() : undefined,
           block: dto.block !== undefined ? (dto.block.trim() ? dto.block.trim() : null) : undefined,
           floor: dto.floor !== undefined ? (dto.floor.trim() ? dto.floor.trim() : null) : undefined,
           status: dto.status !== undefined ? dto.status : undefined,
+        },
+        include: {
+          estate: { select: { id: true, name: true, code: true } },
         },
       });
     } catch (e: unknown) {
@@ -234,7 +366,7 @@ export class ApartmentService {
   }
 
   async deleteUnit(workspaceId: string, unitId: string) {
-    await this.assertApartmentWorkspace(workspaceId);
+    await this.assertPropertyWorkspace(workspaceId);
 
     const unit = await this.prisma.unit.findFirst({ where: { id: unitId, workspaceId } });
     if (!unit) throw new NotFoundException('Unit not found');
@@ -252,7 +384,7 @@ export class ApartmentService {
   }
 
   async listResidents(workspaceId: string, actorUserId?: string) {
-    await this.assertApartmentWorkspace(workspaceId);
+    await this.assertPropertyWorkspace(workspaceId);
     const staffBlocks = await this.getStaffBlockScope(workspaceId, actorUserId);
     return this.prisma.resident.findMany({
       where: {
@@ -283,7 +415,7 @@ export class ApartmentService {
   }
 
   async createResident(workspaceId: string, dto: CreateResidentDto) {
-    await this.assertApartmentWorkspace(workspaceId);
+    await this.assertPropertyWorkspace(workspaceId);
 
     if (dto.unitId) {
       const unit = await this.prisma.unit.findFirst({ where: { id: dto.unitId, workspaceId } });
@@ -330,7 +462,7 @@ export class ApartmentService {
   }
 
   async updateResident(workspaceId: string, residentId: string, dto: Partial<CreateResidentDto>) {
-    await this.assertApartmentWorkspace(workspaceId);
+    await this.assertPropertyWorkspace(workspaceId);
 
     const resident = await this.prisma.resident.findFirst({ where: { id: residentId, workspaceId } });
     if (!resident) throw new NotFoundException('Resident not found');
@@ -377,7 +509,7 @@ export class ApartmentService {
   }
 
   async deleteResident(workspaceId: string, residentId: string) {
-    await this.assertApartmentWorkspace(workspaceId);
+    await this.assertPropertyWorkspace(workspaceId);
 
     const resident = await this.prisma.resident.findFirst({ where: { id: residentId, workspaceId } });
     if (!resident) throw new NotFoundException('Resident not found');
@@ -403,7 +535,7 @@ export class ApartmentService {
   }
 
   async listRequests(workspaceId: string, status?: string, actorUserId?: string) {
-    await this.assertApartmentWorkspace(workspaceId);
+    await this.assertPropertyWorkspace(workspaceId);
 
     const where: any = { workspaceId };
     const staffBlocks = await this.getStaffBlockScope(workspaceId, actorUserId);
@@ -421,7 +553,7 @@ export class ApartmentService {
   }
 
   async createRequest(workspaceId: string, dto: CreateRequestDto, actorUserId?: string) {
-    await this.assertApartmentWorkspace(workspaceId);
+    await this.assertPropertyWorkspace(workspaceId);
 
     const unit = await this.prisma.unit.findFirst({ where: { id: dto.unitId, workspaceId } });
     if (!unit) throw new BadRequestException('unitId does not belong to this workspace');
@@ -477,7 +609,7 @@ export class ApartmentService {
     requestId: string,
     dto: { status?: RequestStatus; priority?: RequestPriority },
   ) {
-    await this.assertApartmentWorkspace(workspaceId);
+    await this.assertPropertyWorkspace(workspaceId);
 
     const req = await this.prisma.request.findFirst({ where: { id: requestId, workspaceId } });
     if (!req) throw new NotFoundException('Request not found');
@@ -496,7 +628,7 @@ export class ApartmentService {
   }
 
   async listRequestMessages(workspaceId: string, requestId: string) {
-    await this.assertApartmentWorkspace(workspaceId);
+    await this.assertPropertyWorkspace(workspaceId);
     const req = await this.prisma.request.findFirst({ where: { id: requestId, workspaceId } });
     if (!req) throw new NotFoundException('Request not found');
 
@@ -511,7 +643,7 @@ export class ApartmentService {
     requestId: string,
     dto: { senderUserId?: string; senderName?: string; body: string },
   ) {
-    await this.assertApartmentWorkspace(workspaceId);
+    await this.assertPropertyWorkspace(workspaceId);
     const req = await this.prisma.request.findFirst({ where: { id: requestId, workspaceId } });
     if (!req) throw new NotFoundException('Request not found');
 
