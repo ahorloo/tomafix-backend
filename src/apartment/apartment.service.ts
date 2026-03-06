@@ -97,14 +97,7 @@ export class ApartmentService {
     const existing = await this.prisma.estate.findFirst({ where: { workspaceId }, orderBy: { createdAt: 'asc' } });
     if (existing) return existing.id;
 
-    const created = await this.prisma.estate.create({
-      data: {
-        workspaceId,
-        name: 'Main Estate',
-        code: 'MAIN',
-      },
-    });
-    return created.id;
+    return null;
   }
 
   private async assertUnitsPlanLimit(workspaceId: string) {
@@ -214,13 +207,7 @@ export class ApartmentService {
       },
     });
 
-    if (estates.length > 0) return estates;
-
-    const created = await this.prisma.estate.create({
-      data: { workspaceId, name: 'Main Estate', code: 'MAIN' },
-      include: { _count: { select: { estateUnits: true } } },
-    });
-    return [created];
+    return estates;
   }
 
   async createEstate(workspaceId: string, dto: CreateEstateDto) {
@@ -336,6 +323,9 @@ export class ApartmentService {
     const block = dto.block?.trim() || null;
     const floor = dto.floor?.trim() || null;
     const estateId = await this.resolveEstateIdForWorkspace(workspaceId, dto.estateId);
+    if (ws.templateType === TemplateType.ESTATE && !estateId) {
+      throw new BadRequestException('Create/select a property (estate) before adding units');
+    }
 
     try {
       if (ws.templateType === TemplateType.ESTATE) {
