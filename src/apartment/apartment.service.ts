@@ -100,6 +100,30 @@ export class ApartmentService {
     return null;
   }
 
+  private nextPlan(planName: 'Starter' | 'Growth' | 'TomaPrime') {
+    if (planName === 'Starter') return 'Growth';
+    if (planName === 'Growth') return 'TomaPrime';
+    return 'TomaPrime';
+  }
+
+  private async assertPropertiesPlanLimit(workspaceId: string) {
+    const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
+    if (!ws) throw new NotFoundException('Workspace not found');
+
+    const planName = resolvePlanName((ws as any).planName || 'Starter');
+    const limit = getEntitlements(planName).limits.properties;
+    const used = await this.prisma.property.count({ where: { workspaceId } });
+
+    if (used >= limit) {
+      throw new ForbiddenException({
+        code: 'PLAN_LIMIT_EXCEEDED',
+        message: `You have reached your ${planName} property limit (${used}/${limit}). Pay and upgrade to continue adding properties.`,
+        requiredPlan: this.nextPlan(planName),
+        context: { limit: 'properties', used, max: limit },
+      } as any);
+    }
+  }
+
   private async assertUnitsPlanLimit(workspaceId: string) {
     const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
     if (!ws) throw new NotFoundException('Workspace not found');
@@ -113,8 +137,8 @@ export class ApartmentService {
     if (used >= limit) {
       throw new ForbiddenException({
         code: 'PLAN_LIMIT_EXCEEDED',
-        message: `You have reached your ${planName} unit limit (${used}/${limit}). Upgrade plan to add more units.`,
-        requiredPlan: planName === 'Starter' ? 'Growth' : 'TomaPrime',
+        message: `You have reached your ${planName} unit limit (${used}/${limit}). Pay and upgrade to continue adding units.`,
+        requiredPlan: this.nextPlan(planName),
         context: { limit: 'units', used, max: limit },
       } as any);
     }
@@ -212,6 +236,7 @@ export class ApartmentService {
 
   async createEstate(workspaceId: string, dto: CreateEstateDto) {
     await this.assertEstateWorkspace(workspaceId);
+    await this.assertPropertiesPlanLimit(workspaceId);
 
     try {
       return await this.prisma.estate.create({

@@ -21,13 +21,9 @@ type GuardRule = GuardedMutation & { method: string; pattern: RegExp };
 
 // Map mutate endpoints (regex on full path)
 const GUARDED: GuardRule[] = [
+  { method: 'POST', pattern: /^\/workspaces\/[^/]+\/apartment\/estates$/, limit: 'properties' },
   { method: 'POST', pattern: /^\/workspaces\/[^/]+\/apartment\/units$/, limit: 'units' },
-  { method: 'PATCH', pattern: /^\/workspaces\/[^/]+\/apartment\/units\/[^/]+$/, limit: 'units' },
-  { method: 'DELETE', pattern: /^\/workspaces\/[^/]+\/apartment\/units\/[^/]+$/, limit: 'units' },
   { method: 'POST', pattern: /^\/workspaces\/[^/]+\/apartment\/residents$/, feature: 'staff' },
-  { method: 'POST', pattern: /^\/workspaces\/[^/]+\/apartment\/requests$/, feature: 'advancedReports' },
-  { method: 'POST', pattern: /^\/workspaces\/[^/]+\/apartment\/blocks$/, feature: 'blocks' },
-  { method: 'PATCH', pattern: /^\/workspaces\/[^/]+\/apartment\/blocks\/[^/]+$/, feature: 'blocks' },
   { method: 'POST', pattern: /^\/workspaces\/[^/]+\/apartment\/reports\/advanced$/, feature: 'advancedReports' },
   { method: 'POST', pattern: /^\/workspaces\/[^/]+\/apartment\/exports$/, feature: 'exports' },
 ];
