@@ -4,14 +4,14 @@ const prisma = new PrismaClient();
 
 const planMatrix: Record<TemplateType, Array<{ name: string; amountPesewas: number }>> = {
   APARTMENT: [
-    { name: 'Starter', amountPesewas: 7900 },
-    { name: 'Growth', amountPesewas: 14900 },
-    { name: 'Toma Prime', amountPesewas: 29900 },
+    { name: 'Starter', amountPesewas: 9900 },
+    { name: 'Growth', amountPesewas: 19900 },
+    { name: 'Toma Prime', amountPesewas: 39900 },
   ],
   ESTATE: [
-    { name: 'Starter', amountPesewas: 12900 },
-    { name: 'Growth', amountPesewas: 24900 },
-    { name: 'Toma Prime', amountPesewas: 49900 },
+    { name: 'Starter', amountPesewas: 19900 },
+    { name: 'Growth', amountPesewas: 34900 },
+    { name: 'Toma Prime', amountPesewas: 69900 },
   ],
   OFFICE: [
     { name: 'Starter', amountPesewas: 9900 },

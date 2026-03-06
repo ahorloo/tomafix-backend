@@ -67,21 +67,21 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       APARTMENT: {
         starter: {
           summary: 'For small apartment buildings',
-          priceText: 'GH₵ 79 / month',
+          priceText: 'GH₵ 99 / month',
           bullets: ['1 building', 'Up to 20 units', 'Requests + residents management'],
-          amountPesewas: 7900,
+          amountPesewas: 9900,
         },
         growth: {
           summary: 'For growing apartments',
-          priceText: 'GH₵ 149 / month',
+          priceText: 'GH₵ 199 / month',
           bullets: ['Up to 3 blocks/properties', 'Up to 120 units', 'Staff + basic reports'],
-          amountPesewas: 14900,
+          amountPesewas: 19900,
         },
         tomaprime: {
           summary: 'For large apartment operations',
-          priceText: 'GH₵ 299 / month',
+          priceText: 'GH₵ 399 / month',
           bullets: ['Up to 5 properties', 'Up to 250 units', 'Advanced reports + exports'],
-          amountPesewas: 29900,
+          amountPesewas: 39900,
         },
       },
       ESTATE: {
@@ -141,9 +141,9 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       const defaults =
         t.key === 'APARTMENT'
           ? [
-              { name: 'Starter', amountPesewas: 7900 },
-              { name: 'Growth', amountPesewas: 14900 },
-              { name: 'Toma Prime', amountPesewas: 29900 },
+              { name: 'Starter', amountPesewas: 9900 },
+              { name: 'Growth', amountPesewas: 19900 },
+              { name: 'Toma Prime', amountPesewas: 39900 },
             ]
           : t.key === 'ESTATE'
             ? [
