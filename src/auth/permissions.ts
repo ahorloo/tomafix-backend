@@ -90,6 +90,12 @@ export function hasPermission(
   permission: PermissionKey,
   policy?: PermissionPolicy | null,
 ) {
+  // Hard rule: users/roles management is owner-only.
+  // Do not allow policy overrides to grant this to staff/technicians/residents.
+  if (permission === 'users:manage') {
+    return role === MemberRole.OWNER_ADMIN;
+  }
+
   const effective = policy ?? defaultPolicyFor(templateType);
   const rolePolicy = effective?.[role] ?? {};
   if (typeof rolePolicy?.[permission] === 'boolean') return !!rolePolicy[permission];
