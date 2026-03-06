@@ -80,13 +80,13 @@ export class ApartmentController {
   }
 
   @WorkspacePermission('units:manage')
-  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF)
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
   @Post('units')
   createUnit(@Param('workspaceId') workspaceId: string, @Body() dto: CreateUnitDto) {
     return this.apartment.createUnit(workspaceId, dto);
   }
 
-  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF)
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
   @Patch('units/:unitId')
   updateUnit(
     @Param('workspaceId') workspaceId: string,

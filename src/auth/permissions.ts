@@ -96,6 +96,11 @@ export function hasPermission(
     return role === MemberRole.OWNER_ADMIN;
   }
 
+  // Hard rule: staff can view units assigned to them, but cannot create/edit/delete units.
+  if (permission === 'units:manage' && role === MemberRole.STAFF) {
+    return false;
+  }
+
   const effective = policy ?? defaultPolicyFor(templateType);
   const rolePolicy = effective?.[role] ?? {};
   if (typeof rolePolicy?.[permission] === 'boolean') return !!rolePolicy[permission];
