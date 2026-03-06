@@ -57,56 +57,71 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
   }
 
   async listPlans(templateType?: TemplateType) {
-    const templateCopy: Record<TemplateType, Record<string, { summary: string; priceText: string; bullets: string[] }>> = {
+    const normalizePlanKey = (raw?: string) =>
+      String(raw || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[\s_-]+/g, '');
+
+    const templateCopy: Record<TemplateType, Record<string, { summary: string; priceText: string; bullets: string[]; amountPesewas: number }>> = {
       APARTMENT: {
-        Starter: {
+        starter: {
           summary: 'For small apartment buildings',
           priceText: 'GH₵ 79 / month',
           bullets: ['1 building', 'Up to 20 units', 'Requests + residents management'],
+          amountPesewas: 7900,
         },
-        Growth: {
+        growth: {
           summary: 'For growing apartments',
           priceText: 'GH₵ 149 / month',
           bullets: ['Up to 3 blocks/properties', 'Up to 120 units', 'Staff + basic reports'],
+          amountPesewas: 14900,
         },
-        'Toma Prime': {
+        tomaprime: {
           summary: 'For large apartment operations',
           priceText: 'GH₵ 299 / month',
           bullets: ['Up to 5 properties', 'Up to 250 units', 'Advanced reports + exports'],
+          amountPesewas: 29900,
         },
       },
       ESTATE: {
-        Starter: {
-          summary: 'For small estates',
-          priceText: 'GH₵ 129 / month',
-          bullets: ['1 property', 'Up to 40 units', 'Central request tracking'],
+        starter: {
+          summary: 'For small residential estate operations',
+          priceText: 'GH₵ 199 / month',
+          bullets: ['Up to 2 properties', 'Up to 60 units', 'Core requests + occupancy tracking'],
+          amountPesewas: 19900,
         },
-        Growth: {
-          summary: 'For growing multi-property portfolios',
-          priceText: 'GH₵ 249 / month',
-          bullets: ['Up to 5 properties', 'Up to 180 units', 'Managers per property'],
+        growth: {
+          summary: 'For growing multi-property residential estates',
+          priceText: 'GH₵ 349 / month',
+          bullets: ['Up to 6 properties', 'Up to 220 units', 'Managers per property + reports'],
+          amountPesewas: 34900,
         },
-        'Toma Prime': {
-          summary: 'For premium estate operations',
-          priceText: 'GH₵ 499 / month',
-          bullets: ['Up to 12 properties', 'Up to 500 units', 'Advanced analytics + priority support'],
+        tomaprime: {
+          summary: 'For premium estate operations at scale',
+          priceText: 'GH₵ 699 / month',
+          bullets: ['Up to 15 properties', 'Up to 600 units', 'Advanced analytics + priority support'],
+          amountPesewas: 69900,
         },
       },
       OFFICE: {
-        Starter: {
+        starter: {
           summary: 'For small office facilities',
           priceText: 'GH₵ 99 / month',
           bullets: ['Basic work orders', 'Asset register', 'Inspection schedules'],
+          amountPesewas: 9900,
         },
-        Growth: {
+        growth: {
           summary: 'For scaling office operations',
           priceText: 'GH₵ 199 / month',
           bullets: ['Departments + SLAs', 'Team assignments', 'Operational reports'],
+          amountPesewas: 19900,
         },
-        'Toma Prime': {
+        tomaprime: {
           summary: 'For enterprise office operations',
           priceText: 'GH₵ 399 / month',
           bullets: ['Multi-site offices', 'Advanced workflows', 'Priority support'],
+          amountPesewas: 39900,
         },
       },
     };
@@ -132,9 +147,9 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
             ]
           : t.key === 'ESTATE'
             ? [
-                { name: 'Starter', amountPesewas: 12900 },
-                { name: 'Growth', amountPesewas: 24900 },
-                { name: 'Toma Prime', amountPesewas: 49900 },
+                { name: 'Starter', amountPesewas: 19900 },
+                { name: 'Growth', amountPesewas: 34900 },
+                { name: 'Toma Prime', amountPesewas: 69900 },
               ]
             : [
                 { name: 'Starter', amountPesewas: 9900 },
@@ -167,10 +182,22 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       orderBy: [{ amountPesewas: 'asc' }],
     });
 
-    return plans.map((p) => ({
-      ...p,
-      ui: templateCopy[p.template.key]?.[p.name] ?? null,
-    }));
+    return plans.map((p) => {
+      const key = normalizePlanKey(p.name);
+      const catalog = templateCopy[p.template.key]?.[key] ?? null;
+
+      return {
+        ...p,
+        amountPesewas: p.amountPesewas > 0 ? p.amountPesewas : catalog?.amountPesewas ?? p.amountPesewas,
+        ui: catalog
+          ? {
+              summary: catalog.summary,
+              priceText: catalog.priceText,
+              bullets: catalog.bullets,
+            }
+          : null,
+      };
+    });
   }
 
   async initPaystackPayment(dto: { workspaceId: string; planId: string }) {
