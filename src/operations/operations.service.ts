@@ -154,11 +154,17 @@ export class OperationsService {
         });
         const allowed = blocks.map((b) => b.block).filter(Boolean);
         if (allowed.length) {
+          const unitsInAllowedBlocks = await this.prisma.apartmentUnit.findMany({
+            where: { workspaceId, block: { in: allowed } },
+            select: { id: true },
+          });
+          const unitIds = unitsInAllowedBlocks.map((u) => u.id);
+
           where = {
             ...where,
             OR: [
               { block: { in: allowed } },
-              { unit: { block: { in: allowed } } },
+              ...(unitIds.length ? [{ unitId: { in: unitIds } }] : []),
             ],
           };
         }
