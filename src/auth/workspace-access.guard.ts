@@ -41,6 +41,14 @@ export class WorkspaceAccessGuard implements CanActivate {
 
     const membership = await this.auth.assertWorkspaceAccess(userId, workspaceId, allowedRoles);
 
+    const nodeEnv = (process.env.NODE_ENV || '').toLowerCase();
+    const relaxGuardsForLocal =
+      nodeEnv !== 'production' && String(process.env.LOCAL_RELAX_GUARDS || '').toLowerCase() === 'true';
+    if (relaxGuardsForLocal) {
+      req.workspaceContext = membership;
+      return true;
+    }
+
     const path = `${req.baseUrl || ''}${req.path || ''}`.replace(/\\/g, '/');
     const workspace: any = membership.workspace || {};
     const renewalAt = workspace?.nextRenewal ? new Date(workspace.nextRenewal) : null;
