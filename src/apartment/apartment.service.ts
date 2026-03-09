@@ -389,7 +389,9 @@ export class ApartmentService {
           .join(' • ');
         const where = parts ? ` (${parts})` : '';
         throw new ConflictException(
-          `Unit "${label}" already exists in this workspace${where}. Try a different label.`,
+          ws.templateType === TemplateType.ESTATE
+            ? `Unit "${label}" already exists in this property${where}. Try a different label.`
+            : `Unit "${label}" already exists in this workspace${where}. Try a different label.`,
         );
       }
       throw e;
@@ -440,7 +442,11 @@ export class ApartmentService {
       });
     } catch (e: unknown) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-        throw new ConflictException('A unit with this label already exists in this workspace. Try a different label.');
+        throw new ConflictException(
+          ws.templateType === TemplateType.ESTATE
+            ? 'A unit with this label already exists in this property. Try a different label.'
+            : 'A unit with this label already exists in this workspace. Try a different label.',
+        );
       }
       throw e;
     }

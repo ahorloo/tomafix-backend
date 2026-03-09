@@ -539,7 +539,7 @@ model EstateUnit {
   estateResidents EstateResident[]
   estateRequests  EstateRequest[]
 
-  @@unique([workspaceId, label])
+  @@unique([workspaceId, estateId, label])
   @@index([workspaceId])
   @@index([estateId])
 }
