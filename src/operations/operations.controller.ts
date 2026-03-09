@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -23,8 +24,8 @@ export class OperationsController {
 
   @WorkspacePermission('notices:view')
   @Get('notices')
-  listNotices(@Param('workspaceId') workspaceId: string) {
-    return this.operations.listNotices(workspaceId);
+  listNotices(@Param('workspaceId') workspaceId: string, @Query('estateId') estateId?: string) {
+    return this.operations.listNotices(workspaceId, estateId);
   }
 
   @WorkspacePermission('notices:manage')
@@ -32,7 +33,7 @@ export class OperationsController {
   @Post('notices')
   createNotice(
     @Param('workspaceId') workspaceId: string,
-    @Body() dto: { title: string; body: string; audience?: NoticeAudience },
+    @Body() dto: { title: string; body: string; audience?: NoticeAudience; estateId?: string },
   ) {
     return this.operations.createNotice(workspaceId, dto);
   }
@@ -56,8 +57,8 @@ export class OperationsController {
 
   @WorkspacePermission('inspections:view')
   @Get('inspections')
-  listInspections(@Param('workspaceId') workspaceId: string, @Req() req: any) {
-    return this.operations.listInspections(workspaceId, req.authUserId);
+  listInspections(@Param('workspaceId') workspaceId: string, @Req() req: any, @Query('estateId') estateId?: string) {
+    return this.operations.listInspections(workspaceId, req.authUserId, estateId);
   }
 
   @WorkspacePermission('inspections:manage')
@@ -65,7 +66,7 @@ export class OperationsController {
   @Post('inspections')
   createInspection(
     @Param('workspaceId') workspaceId: string,
-    @Body() dto: { title: string; scope?: InspectionScope; unitId?: string; block?: string; floor?: string; dueDate: string; checklist?: string[] },
+    @Body() dto: { title: string; scope?: InspectionScope; unitId?: string; block?: string; floor?: string; dueDate: string; checklist?: string[]; estateId?: string },
   ) {
     return this.operations.createInspection(workspaceId, dto);
   }

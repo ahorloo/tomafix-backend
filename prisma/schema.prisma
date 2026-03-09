@@ -398,8 +398,10 @@ model Estate {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  estateUnits EstateUnit[]
+  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  estateUnits  EstateUnit[]
+  notices      Notice[]
+  inspections  Inspection[]
 
   @@unique([workspaceId, name])
   @@unique([workspaceId, code])
@@ -422,6 +424,7 @@ model Property {
 model Notice {
   id          String         @id @default(cuid())
   workspaceId String
+  estateId    String?
   title       String
   body        String
   audience    NoticeAudience @default(ALL)
@@ -430,15 +433,18 @@ model Notice {
   updatedAt   DateTime       @updatedAt
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  estate    Estate?   @relation(fields: [estateId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId])
-  @@index([workspaceId, audience, createdAt])
+  @@index([estateId])
+  @@index([workspaceId, estateId, audience, createdAt])
   @@index([createdAt])
 }
 
 model Inspection {
   id          String           @id @default(cuid())
   workspaceId String
+  estateId    String?
   unitId      String?
   scope       InspectionScope  @default(UNIT)
   block       String?
@@ -452,11 +458,13 @@ model Inspection {
   updatedAt   DateTime         @updatedAt
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  estate    Estate?   @relation(fields: [estateId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId])
-  @@index([workspaceId, scope, block, floor])
+  @@index([estateId])
+  @@index([workspaceId, estateId, scope, block, floor])
   @@index([unitId])
-  @@index([dueDate])
+  @@index([workspaceId, estateId, dueDate])
 }
 
 // Template-separated physical tables (phase 2)

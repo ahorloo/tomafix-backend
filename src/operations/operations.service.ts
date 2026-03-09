@@ -48,14 +48,38 @@ export class OperationsService {
     }
   }
 
-  private async resolveNoticeRecipients(workspaceId: string, audience: NoticeAudience, templateType: TemplateType) {
+  private async resolveEstateIdForWorkspace(workspaceId: string, estateId?: string | null) {
+    const ws = await this.assertPropertyWorkspace(workspaceId);
+    if (ws.templateType !== TemplateType.ESTATE) return null;
+
+    if (estateId) {
+      const estate = await this.prisma.estate.findFirst({ where: { id: estateId, workspaceId } });
+      if (!estate) throw new BadRequestException('estateId does not belong to this workspace');
+      return estate.id;
+    }
+
+    const existing = await this.prisma.estate.findFirst({ where: { workspaceId }, orderBy: { createdAt: 'asc' } });
+    return existing?.id ?? null;
+  }
+
+  private async resolveNoticeRecipients(
+    workspaceId: string,
+    audience: NoticeAudience,
+    templateType: TemplateType,
+    estateId?: string | null,
+  ) {
     const recipients = new Set<string>();
 
     if (audience === NoticeAudience.ALL || audience === NoticeAudience.RESIDENTS) {
       const residents =
         templateType === TemplateType.ESTATE
           ? await this.prisma.estateResident.findMany({
-              where: { workspaceId, status: ResidentStatus.ACTIVE, email: { not: null } },
+              where: {
+                workspaceId,
+                status: ResidentStatus.ACTIVE,
+                email: { not: null },
+                ...(estateId ? { unit: { estateId } } : {}),
+              },
               select: { email: true },
             })
           : await this.prisma.apartmentResident.findMany({
@@ -100,17 +124,23 @@ export class OperationsService {
     return ws;
   }
 
-  async listNotices(workspaceId: string) {
+  async listNotices(workspaceId: string, estateId?: string) {
     await this.assertPropertyWorkspace(workspaceId);
-    return this.prisma.notice.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' } });
+    const resolvedEstateId = await this.resolveEstateIdForWorkspace(workspaceId, estateId);
+    return this.prisma.notice.findMany({
+      where: { workspaceId, ...(resolvedEstateId ? { estateId: resolvedEstateId } : {}) },
+      orderBy: { createdAt: 'desc' },
+    });
   }
 
-  async createNotice(workspaceId: string, dto: { title: string; body: string; audience?: NoticeAudience }) {
+  async createNotice(workspaceId: string, dto: { title: string; body: string; audience?: NoticeAudience; estateId?: string }) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
+    const resolvedEstateId = await this.resolveEstateIdForWorkspace(workspaceId, dto.estateId);
 
     const notice = await this.prisma.notice.create({
       data: {
         workspaceId,
+        estateId: resolvedEstateId,
         title: dto.title.trim(),
         body: dto.body.trim(),
         audience: dto.audience ?? NoticeAudience.ALL,
@@ -119,7 +149,7 @@ export class OperationsService {
     });
 
     try {
-      const recipients = await this.resolveNoticeRecipients(workspaceId, notice.audience, ws.templateType);
+      const recipients = await this.resolveNoticeRecipients(workspaceId, notice.audience, ws.templateType, resolvedEstateId);
       await Promise.all(
         recipients.map((to) =>
           this.sendEmail({
@@ -153,10 +183,11 @@ export class OperationsService {
     return { ok: true };
   }
 
-  async listInspections(workspaceId: string, actorUserId?: string) {
+  async listInspections(workspaceId: string, actorUserId?: string, estateId?: string) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
+    const resolvedEstateId = await this.resolveEstateIdForWorkspace(workspaceId, estateId);
 
-    let where: any = { workspaceId };
+    let where: any = { workspaceId, ...(resolvedEstateId ? { estateId: resolvedEstateId } : {}) };
     if (actorUserId) {
       const member = await this.prisma.workspaceMember.findFirst({
         where: { workspaceId, userId: actorUserId, isActive: true },
@@ -199,9 +230,10 @@ export class OperationsService {
 
   async createInspection(
     workspaceId: string,
-    dto: { title: string; scope?: InspectionScope; unitId?: string; block?: string; floor?: string; dueDate: string; checklist?: string[] },
+    dto: { title: string; scope?: InspectionScope; unitId?: string; block?: string; floor?: string; dueDate: string; checklist?: string[]; estateId?: string },
   ) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
+    const resolvedEstateId = await this.resolveEstateIdForWorkspace(workspaceId, dto.estateId);
 
     const scope = dto.scope || InspectionScope.UNIT;
     const block = dto.block?.trim() || null;
@@ -211,7 +243,7 @@ export class OperationsService {
     if (scope === InspectionScope.UNIT) {
       if (!dto.unitId) throw new BadRequestException('unitId is required for UNIT inspections');
       const unit = ws.templateType === TemplateType.ESTATE
-        ? await this.prisma.estateUnit.findFirst({ where: { id: dto.unitId, workspaceId } })
+        ? await this.prisma.estateUnit.findFirst({ where: { id: dto.unitId, workspaceId, ...(resolvedEstateId ? { estateId: resolvedEstateId } : {}) } })
         : await this.prisma.apartmentUnit.findFirst({ where: { id: dto.unitId, workspaceId } });
       if (!unit) throw new BadRequestException('unitId does not belong to this workspace');
       unitId = unit.id;
@@ -228,6 +260,7 @@ export class OperationsService {
     return this.prisma.inspection.create({
       data: {
         workspaceId,
+        estateId: resolvedEstateId,
         title: dto.title.trim(),
         scope,
         unitId,
