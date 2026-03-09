@@ -8,7 +8,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { createHash, randomBytes, randomInt, randomUUID, scryptSync, timingSafeEqual } from 'crypto';
-import { MemberRole, OtpChannel, OtpPurpose, ResidentRole, ResidentStatus, TemplateType, UnitStatus, WorkspaceStatus } from '@prisma/client';
+import { BillingStatus, MemberRole, OtpChannel, OtpPurpose, ResidentRole, ResidentStatus, TemplateType, UnitStatus, WorkspaceStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
@@ -579,6 +579,9 @@ export class OnboardingService {
 
   /**
    * Step 2 (Strict): Verify OTP → move workspace to PENDING_PAYMENT.
+   *
+   * Local/dev override: when LOCAL_BYPASS_PAYMENT=true (and not production),
+   * workspace is auto-activated for easier local testing.
    */
   async verifyOwnerEmailOtp(workspaceId: string, email: string, code: string) {
     const wsId = (workspaceId ?? '').trim();
@@ -626,6 +629,11 @@ export class OnboardingService {
     if (!ok) throw new BadRequestException('Invalid code');
 
     const now = new Date();
+    const bypassPaymentForLocal =
+      (process.env.NODE_ENV || '').toLowerCase() !== 'production' &&
+      String(process.env.LOCAL_BYPASS_PAYMENT || '').toLowerCase() === 'true';
+
+    const targetStatus = bypassPaymentForLocal ? WorkspaceStatus.ACTIVE : WorkspaceStatus.PENDING_PAYMENT;
 
     await this.prisma.$transaction([
       this.prisma.otpCode.update({ where: { id: otp.id }, data: { consumedAt: now } }),
@@ -635,11 +643,20 @@ export class OnboardingService {
       }),
       this.prisma.workspace.update({
         where: { id: wsId },
-        data: { ownerVerifiedAt: now, status: WorkspaceStatus.PENDING_PAYMENT },
+        data: {
+          ownerVerifiedAt: now,
+          status: targetStatus,
+          ...(bypassPaymentForLocal ? { billingStatus: BillingStatus.ACTIVE } : {}),
+        },
       }),
     ]);
 
-    return { ok: true, next: 'PAYMENT', workspaceId: wsId, status: WorkspaceStatus.PENDING_PAYMENT };
+    return {
+      ok: true,
+      next: bypassPaymentForLocal ? 'APP' : 'PAYMENT',
+      workspaceId: wsId,
+      status: targetStatus,
+    };
   }
 
   // -------- helpers --------
