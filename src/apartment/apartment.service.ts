@@ -481,15 +481,17 @@ export class ApartmentService {
     return { ok: true };
   }
 
-  async listResidents(workspaceId: string, actorUserId?: string) {
+  async listResidents(workspaceId: string, actorUserId?: string, estateId?: string) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
     const staffBlocks = await this.getStaffBlockScope(workspaceId, actorUserId);
 
     if (ws.templateType === TemplateType.ESTATE) {
+      const resolvedEstateId = await this.resolveEstateIdForWorkspace(workspaceId, estateId);
       return this.prisma.estateResident.findMany({
         where: {
           workspaceId,
           ...(staffBlocks ? { unit: { block: { in: staffBlocks } } } : {}),
+          ...(resolvedEstateId ? { unit: { estateId: resolvedEstateId, ...(staffBlocks ? { block: { in: staffBlocks } } : {}) } } : {}),
         },
         orderBy: [{ fullName: 'asc' }],
         include: { unit: { select: { id: true, label: true, block: true, floor: true } } },

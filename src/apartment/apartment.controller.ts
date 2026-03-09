@@ -105,8 +105,12 @@ export class ApartmentController {
   // Residents
   @WorkspacePermission('residents:view')
   @Get('residents')
-  listResidents(@Param('workspaceId') workspaceId: string, @Req() req: any) {
-    return this.apartment.listResidents(workspaceId, req.authUserId);
+  listResidents(
+    @Param('workspaceId') workspaceId: string,
+    @Req() req: any,
+    @Query('estateId') estateId?: string,
+  ) {
+    return this.apartment.listResidents(workspaceId, req.authUserId, estateId);
   }
 
   @WorkspacePermission('residents:manage')
