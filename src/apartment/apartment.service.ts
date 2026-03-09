@@ -701,7 +701,7 @@ export class ApartmentService {
     return { ok: true, mode: 'deleted' };
   }
 
-  async listRequests(workspaceId: string, status?: string, actorUserId?: string) {
+  async listRequests(workspaceId: string, status?: string, actorUserId?: string, estateId?: string) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
 
     const where: any = { workspaceId };
@@ -710,6 +710,14 @@ export class ApartmentService {
     if (status) where.status = status as RequestStatus;
 
     if (ws.templateType === TemplateType.ESTATE) {
+      const resolvedEstateId = await this.resolveEstateIdForWorkspace(workspaceId, estateId);
+      if (resolvedEstateId) {
+        where.unit = {
+          ...(where.unit || {}),
+          estateId: resolvedEstateId,
+        };
+      }
+
       return this.prisma.estateRequest.findMany({
         where,
         orderBy: { createdAt: 'desc' },
