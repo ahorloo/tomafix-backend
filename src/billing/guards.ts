@@ -43,10 +43,10 @@ export class EntitlementsGuard implements NestMiddleware {
     if (!workspaceId) throw new BadRequestException('workspaceId is required');
 
     const cacheKey = `billing:entitlements:${workspaceId}`;
-    const cached = cacheGet<{ planName: PlanName; usage: { propertiesUsed: number; unitsUsed: number } }>(cacheKey);
+    const cached = cacheGet<{ planName: PlanName; templateType: TemplateType; usage: { propertiesUsed: number; unitsUsed: number } }>(cacheKey);
     const entitlements = cached || (await this.computeAndCache(workspaceId, cacheKey));
 
-    const { limits, features } = getEntitlements(entitlements.planName);
+    const { limits, features } = getEntitlements(entitlements.planName, entitlements.templateType as TemplateType);
 
     if (rule.limit) {
       const used = entitlements.usage[`${rule.limit}Used` as const];
@@ -71,13 +71,15 @@ export class EntitlementsGuard implements NestMiddleware {
     assertPlanExists(planName);
 
     const [propertiesUsed, unitsUsed] = await Promise.all([
-      this.prisma.property.count({ where: { workspaceId } }),
+      ws.templateType === TemplateType.ESTATE
+        ? this.prisma.estate.count({ where: { workspaceId } })
+        : this.prisma.property.count({ where: { workspaceId } }),
       ws.templateType === TemplateType.ESTATE
         ? this.prisma.estateUnit.count({ where: { workspaceId } })
         : this.prisma.apartmentUnit.count({ where: { workspaceId } }),
     ]);
 
-    const value = { planName, usage: { propertiesUsed, unitsUsed } };
+    const value = { planName, templateType: ws.templateType, usage: { propertiesUsed, unitsUsed } };
     cacheSet(cacheKey, value, 3 * 60 * 1000);
     return value;
   }

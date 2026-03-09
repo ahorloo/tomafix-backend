@@ -1,3 +1,4 @@
+import { TemplateType } from '@prisma/client';
 import { PlanName } from '../types/billing';
 
 type PlanLimits = { properties: number; units: number };
@@ -69,6 +70,14 @@ const PLAN_ALIASES: Record<string, PlanName> = {
   'toma prime': 'TomaPrime',
 };
 
+const TEMPLATE_LIMIT_OVERRIDES: Partial<Record<TemplateType, Record<PlanName, PlanLimits>>> = {
+  ESTATE: {
+    Starter: { properties: 2, units: 60 },
+    Growth: { properties: 6, units: 220 },
+    TomaPrime: { properties: 15, units: 600 },
+  },
+};
+
 export function resolvePlanName(input?: string | null): PlanName {
   const raw = String(input || '').trim();
   if (!raw) return 'Starter';
@@ -87,6 +96,9 @@ export function assertPlanExists(planName: string): asserts planName is PlanName
   resolvePlanName(planName);
 }
 
-export function getEntitlements(planName: PlanName) {
-  return PLAN_MAP[planName];
+export function getEntitlements(planName: PlanName, templateType?: TemplateType) {
+  const base = PLAN_MAP[planName];
+  const override = templateType ? TEMPLATE_LIMIT_OVERRIDES[templateType]?.[planName] : undefined;
+  if (!override) return base;
+  return { ...base, limits: override };
 }

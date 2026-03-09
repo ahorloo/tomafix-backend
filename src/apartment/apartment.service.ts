@@ -111,8 +111,10 @@ export class ApartmentService {
     if (!ws) throw new NotFoundException('Workspace not found');
 
     const planName = resolvePlanName((ws as any).planName || 'Starter');
-    const limit = getEntitlements(planName).limits.properties;
-    const used = await this.prisma.property.count({ where: { workspaceId } });
+    const limit = getEntitlements(planName, ws.templateType).limits.properties;
+    const used = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estate.count({ where: { workspaceId } })
+      : await this.prisma.property.count({ where: { workspaceId } });
 
     if (used >= limit) {
       throw new ForbiddenException({
@@ -129,7 +131,7 @@ export class ApartmentService {
     if (!ws) throw new NotFoundException('Workspace not found');
 
     const planName = resolvePlanName((ws as any).planName || 'Starter');
-    const limit = getEntitlements(planName).limits.units;
+    const limit = getEntitlements(planName, ws.templateType).limits.units;
     const used = ws.templateType === TemplateType.ESTATE
       ? await this.prisma.estateUnit.count({ where: { workspaceId } })
       : await this.prisma.apartmentUnit.count({ where: { workspaceId } });
