@@ -154,7 +154,7 @@ export class OperationsService {
   }
 
   async listInspections(workspaceId: string, actorUserId?: string) {
-    await this.assertApartmentWorkspace(workspaceId);
+    const ws = await this.assertPropertyWorkspace(workspaceId);
 
     let where: any = { workspaceId };
     if (actorUserId) {
@@ -169,10 +169,15 @@ export class OperationsService {
         });
         const allowed = blocks.map((b) => b.block).filter(Boolean);
         if (allowed.length) {
-          const unitsInAllowedBlocks = await this.prisma.apartmentUnit.findMany({
-            where: { workspaceId, block: { in: allowed } },
-            select: { id: true },
-          });
+          const unitsInAllowedBlocks = ws.templateType === TemplateType.ESTATE
+            ? await this.prisma.estateUnit.findMany({
+                where: { workspaceId, block: { in: allowed } },
+                select: { id: true },
+              })
+            : await this.prisma.apartmentUnit.findMany({
+                where: { workspaceId, block: { in: allowed } },
+                select: { id: true },
+              });
           const unitIds = unitsInAllowedBlocks.map((u) => u.id);
 
           where = {
@@ -196,7 +201,7 @@ export class OperationsService {
     workspaceId: string,
     dto: { title: string; scope?: InspectionScope; unitId?: string; block?: string; floor?: string; dueDate: string; checklist?: string[] },
   ) {
-    await this.assertApartmentWorkspace(workspaceId);
+    const ws = await this.assertPropertyWorkspace(workspaceId);
 
     const scope = dto.scope || InspectionScope.UNIT;
     const block = dto.block?.trim() || null;
@@ -205,7 +210,9 @@ export class OperationsService {
     let unitId: string | null = null;
     if (scope === InspectionScope.UNIT) {
       if (!dto.unitId) throw new BadRequestException('unitId is required for UNIT inspections');
-      const unit = await this.prisma.apartmentUnit.findFirst({ where: { id: dto.unitId, workspaceId } });
+      const unit = ws.templateType === TemplateType.ESTATE
+        ? await this.prisma.estateUnit.findFirst({ where: { id: dto.unitId, workspaceId } })
+        : await this.prisma.apartmentUnit.findFirst({ where: { id: dto.unitId, workspaceId } });
       if (!unit) throw new BadRequestException('unitId does not belong to this workspace');
       unitId = unit.id;
     }
@@ -237,7 +244,7 @@ export class OperationsService {
     inspectionId: string,
     dto: { status?: InspectionStatus; result?: string },
   ) {
-    await this.assertApartmentWorkspace(workspaceId);
+    await this.assertPropertyWorkspace(workspaceId);
     const row = await this.prisma.inspection.findFirst({ where: { id: inspectionId, workspaceId } });
     if (!row) throw new NotFoundException('Inspection not found');
 
