@@ -580,8 +580,8 @@ export class OnboardingService {
   /**
    * Step 2 (Strict): Verify OTP → move workspace to PENDING_PAYMENT.
    *
-   * Local/dev override: when LOCAL_BYPASS_PAYMENT=true (and not production),
-   * workspace is auto-activated for easier local testing.
+   * Local/dev override: in development (or when LOCAL_BYPASS_PAYMENT=true),
+   * and never in production, workspace is auto-activated for easier local testing.
    */
   async verifyOwnerEmailOtp(workspaceId: string, email: string, code: string) {
     const wsId = (workspaceId ?? '').trim();
@@ -629,9 +629,11 @@ export class OnboardingService {
     if (!ok) throw new BadRequestException('Invalid code');
 
     const now = new Date();
+    const nodeEnv = (process.env.NODE_ENV || '').toLowerCase();
+    const localBypassRaw = String(process.env.LOCAL_BYPASS_PAYMENT || '').toLowerCase();
     const bypassPaymentForLocal =
-      (process.env.NODE_ENV || '').toLowerCase() !== 'production' &&
-      String(process.env.LOCAL_BYPASS_PAYMENT || '').toLowerCase() === 'true';
+      nodeEnv !== 'production' &&
+      (nodeEnv === 'development' || localBypassRaw === 'true');
 
     const targetStatus = bypassPaymentForLocal ? WorkspaceStatus.ACTIVE : WorkspaceStatus.PENDING_PAYMENT;
 
