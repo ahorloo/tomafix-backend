@@ -9,6 +9,7 @@
     "prebuild": "pnpm run prisma:generate",
     "build": "pnpm exec nest build",
     "test": "pnpm exec jest --passWithNoTests",
+    "test:e2e": "pnpm exec jest --config ./test/jest-e2e.json --passWithNoTests",
     "start": "dotenv -e .env -- pnpm exec nest start",
     "start:dev": "dotenv -e .env -- pnpm exec nest start --watch",
     "start:node": "dotenv -e .env -- node dist/src/main.js",

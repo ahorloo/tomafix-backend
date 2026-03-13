@@ -76,6 +76,12 @@ const TEMPLATE_LIMIT_OVERRIDES: Partial<Record<TemplateType, Record<PlanName, Pl
     Growth: { properties: 6, units: 220 },
     TomaPrime: { properties: 15, units: 600 },
   },
+  // OFFICE: properties = number of office locations, units = number of areas/departments
+  OFFICE: {
+    Starter: { properties: 1, units: 10 },
+    Growth: { properties: 3, units: 50 },
+    TomaPrime: { properties: 10, units: 200 },
+  },
 };
 
 export function resolvePlanName(input?: string | null): PlanName {

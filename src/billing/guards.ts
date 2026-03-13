@@ -24,6 +24,8 @@ const GUARDED: GuardRule[] = [
   { method: 'POST', pattern: /^\/workspaces\/[^/]+\/apartment\/estates$/, limit: 'properties' },
   { method: 'POST', pattern: /^\/workspaces\/[^/]+\/apartment\/units$/, limit: 'units' },
   { method: 'POST', pattern: /^\/workspaces\/[^/]+\/apartment\/residents$/, feature: 'staff' },
+  { method: 'POST', pattern: /^\/workspaces\/[^/]+\/office\/areas$/, limit: 'units' },
+  { method: 'POST', pattern: /^\/workspaces\/[^/]+\/office\/assets$/, limit: 'properties' },
   { method: 'POST', pattern: /^\/workspaces\/[^/]+\/apartment\/reports\/advanced$/, feature: 'advancedReports' },
   { method: 'POST', pattern: /^\/workspaces\/[^/]+\/apartment\/exports$/, feature: 'exports' },
 ];
@@ -73,10 +75,14 @@ export class EntitlementsGuard implements NestMiddleware {
     const [propertiesUsed, unitsUsed] = await Promise.all([
       ws.templateType === TemplateType.ESTATE
         ? this.prisma.estate.count({ where: { workspaceId } })
-        : this.prisma.property.count({ where: { workspaceId } }),
+        : ws.templateType === TemplateType.OFFICE
+          ? this.prisma.officeAsset.count({ where: { workspaceId } })
+          : this.prisma.property.count({ where: { workspaceId } }),
       ws.templateType === TemplateType.ESTATE
         ? this.prisma.estateUnit.count({ where: { workspaceId } })
-        : this.prisma.apartmentUnit.count({ where: { workspaceId } }),
+        : ws.templateType === TemplateType.OFFICE
+          ? this.prisma.officeArea.count({ where: { workspaceId } })
+          : this.prisma.apartmentUnit.count({ where: { workspaceId } }),
     ]);
 
     const value = { planName, templateType: ws.templateType, usage: { propertiesUsed, unitsUsed } };

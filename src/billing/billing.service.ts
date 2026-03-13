@@ -11,6 +11,7 @@ import {
 import { createHmac, randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaystackService } from './paystack.service';
+import { getPaystackConfig } from './paystack.config';
 
 @Injectable()
 export class BillingService implements OnModuleInit, OnModuleDestroy {
@@ -465,8 +466,7 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
    * Verify Paystack webhook signature and process event
    */
   async handlePaystackWebhook(rawBody: Buffer, headers: Record<string, any>, payload: any) {
-    const secret = process.env.PAYSTACK_SECRET_KEY || '';
-    if (!secret) throw new BadRequestException('PAYSTACK_SECRET_KEY not set');
+    const { secret } = getPaystackConfig(process.env);
 
     const signature = headers['x-paystack-signature'] as string | undefined;
     if (!signature) throw new BadRequestException('Missing x-paystack-signature');
@@ -850,10 +850,13 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       orderBy: { receivedAt: 'desc' },
       select: { receivedAt: true },
     });
+    const paystack = this.paystack.getConfigSummary();
 
     return {
       ok: true,
       webhookLastSeenAt: webhook?.receivedAt ?? null,
+      paystack,
+      callbackUrl: process.env.PAYSTACK_CALLBACK_URL || null,
     };
   }
 

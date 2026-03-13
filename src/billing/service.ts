@@ -25,10 +25,14 @@ export class BillingDomainService {
     const [propertiesUsed, unitsUsed] = await Promise.all([
       ws.templateType === TemplateType.ESTATE
         ? this.prisma.estate.count({ where: { workspaceId } })
-        : this.prisma.property.count({ where: { workspaceId } }),
+        : ws.templateType === TemplateType.OFFICE
+          ? this.prisma.officeAsset.count({ where: { workspaceId } })
+          : this.prisma.property.count({ where: { workspaceId } }),
       ws.templateType === TemplateType.ESTATE
         ? this.prisma.estateUnit.count({ where: { workspaceId } })
-        : this.prisma.apartmentUnit.count({ where: { workspaceId } }),
+        : ws.templateType === TemplateType.OFFICE
+          ? this.prisma.officeArea.count({ where: { workspaceId } })
+          : this.prisma.apartmentUnit.count({ where: { workspaceId } }),
     ]);
 
     const plan = getEntitlements(planName, ws.templateType);

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { getPaystackConfig } from './paystack.config';
 
 type PaystackInitResponse = {
   status: boolean;
@@ -14,8 +15,12 @@ type PaystackInitResponse = {
 export class PaystackService {
   private baseUrl = 'https://api.paystack.co';
 
-  private get secret() {
-    return process.env.PAYSTACK_SECRET_KEY || '';
+  getConfigSummary() {
+    const config = getPaystackConfig(process.env, { allowUnconfigured: true });
+    return {
+      mode: config.mode,
+      configured: config.configured,
+    };
   }
 
   async initializeTransaction(input: {
@@ -26,12 +31,12 @@ export class PaystackService {
     callback_url?: string;
     metadata?: any;
   }) {
-    if (!this.secret) throw new Error('PAYSTACK_SECRET_KEY not set');
+    const config = getPaystackConfig(process.env);
 
     const res = await fetch(`${this.baseUrl}/transaction/initialize`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${this.secret}`,
+        Authorization: `Bearer ${config.secret}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({

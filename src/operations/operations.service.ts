@@ -70,6 +70,19 @@ export class OperationsService {
   ) {
     const recipients = new Set<string>();
 
+    // OFFICE: all recipients are workspace members (employees/staff)
+    if (templateType === TemplateType.OFFICE) {
+      const members = await this.prisma.workspaceMember.findMany({
+        where: { workspaceId, isActive: true },
+        include: { user: { select: { email: true } } },
+      });
+      for (const m of members) {
+        const email = m.user?.email?.trim().toLowerCase();
+        if (email) recipients.add(email);
+      }
+      return Array.from(recipients);
+    }
+
     if (audience === NoticeAudience.ALL || audience === NoticeAudience.RESIDENTS) {
       const residents =
         templateType === TemplateType.ESTATE
@@ -106,11 +119,24 @@ export class OperationsService {
     return Array.from(recipients);
   }
 
+  private async assertOperationsWorkspace(workspaceId: string) {
+    const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
+    if (!ws) throw new NotFoundException('Workspace not found');
+    if (
+      ws.templateType !== TemplateType.APARTMENT &&
+      ws.templateType !== TemplateType.ESTATE &&
+      ws.templateType !== TemplateType.OFFICE
+    ) {
+      throw new BadRequestException('Workspace template not supported');
+    }
+    return ws;
+  }
+
   private async assertPropertyWorkspace(workspaceId: string) {
     const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
     if (!ws) throw new NotFoundException('Workspace not found');
-    if (ws.templateType !== TemplateType.APARTMENT && ws.templateType !== TemplateType.ESTATE) {
-      throw new BadRequestException('Operations endpoints currently enabled for APARTMENT/ESTATE templates');
+    if (ws.templateType !== TemplateType.APARTMENT && ws.templateType !== TemplateType.ESTATE && ws.templateType !== TemplateType.OFFICE) {
+      throw new BadRequestException('Operations endpoints currently enabled for APARTMENT/ESTATE/OFFICE templates');
     }
     return ws;
   }
@@ -125,8 +151,10 @@ export class OperationsService {
   }
 
   async listNotices(workspaceId: string, estateId?: string) {
-    await this.assertPropertyWorkspace(workspaceId);
-    const resolvedEstateId = await this.resolveEstateIdForWorkspace(workspaceId, estateId);
+    const ws = await this.assertOperationsWorkspace(workspaceId);
+    const resolvedEstateId = ws.templateType !== TemplateType.OFFICE
+      ? await this.resolveEstateIdForWorkspace(workspaceId, estateId)
+      : null;
     return this.prisma.notice.findMany({
       where: { workspaceId, ...(resolvedEstateId ? { estateId: resolvedEstateId } : {}) },
       orderBy: { createdAt: 'desc' },
@@ -134,8 +162,10 @@ export class OperationsService {
   }
 
   async createNotice(workspaceId: string, dto: { title: string; body: string; audience?: NoticeAudience; estateId?: string }) {
-    const ws = await this.assertPropertyWorkspace(workspaceId);
-    const resolvedEstateId = await this.resolveEstateIdForWorkspace(workspaceId, dto.estateId);
+    const ws = await this.assertOperationsWorkspace(workspaceId);
+    const resolvedEstateId = ws.templateType !== TemplateType.OFFICE
+      ? await this.resolveEstateIdForWorkspace(workspaceId, dto.estateId)
+      : null;
 
     const notice = await this.prisma.notice.create({
       data: {
@@ -167,7 +197,7 @@ export class OperationsService {
   }
 
   async markNoticeSeen(workspaceId: string, noticeId: string, actor: string) {
-    await this.assertPropertyWorkspace(workspaceId);
+    await this.assertOperationsWorkspace(workspaceId);
     const row = await this.prisma.notice.findFirst({ where: { id: noticeId, workspaceId } });
     if (!row) throw new NotFoundException('Notice not found');
     const arr = Array.isArray(row.seenBy) ? (row.seenBy as string[]) : [];
@@ -176,7 +206,7 @@ export class OperationsService {
   }
 
   async deleteNotice(workspaceId: string, noticeId: string) {
-    await this.assertPropertyWorkspace(workspaceId);
+    await this.assertOperationsWorkspace(workspaceId);
     const row = await this.prisma.notice.findFirst({ where: { id: noticeId, workspaceId } });
     if (!row) throw new NotFoundException('Notice not found');
     await this.prisma.notice.delete({ where: { id: noticeId } });
@@ -184,11 +214,11 @@ export class OperationsService {
   }
 
   async listInspections(workspaceId: string, actorUserId?: string, estateId?: string) {
-    const ws = await this.assertPropertyWorkspace(workspaceId);
+    const ws = await this.assertOperationsWorkspace(workspaceId);
     const resolvedEstateId = await this.resolveEstateIdForWorkspace(workspaceId, estateId);
 
     let where: any = { workspaceId, ...(resolvedEstateId ? { estateId: resolvedEstateId } : {}) };
-    if (actorUserId) {
+    if (actorUserId && ws.templateType !== TemplateType.OFFICE) {
       const member = await this.prisma.workspaceMember.findFirst({
         where: { workspaceId, userId: actorUserId, isActive: true },
         select: { role: true },
@@ -232,15 +262,17 @@ export class OperationsService {
     workspaceId: string,
     dto: { title: string; scope?: InspectionScope; unitId?: string; block?: string; floor?: string; dueDate: string; checklist?: string[]; estateId?: string },
   ) {
-    const ws = await this.assertPropertyWorkspace(workspaceId);
-    const resolvedEstateId = await this.resolveEstateIdForWorkspace(workspaceId, dto.estateId);
+    const ws = await this.assertOperationsWorkspace(workspaceId);
+    const resolvedEstateId = ws.templateType !== TemplateType.OFFICE
+      ? await this.resolveEstateIdForWorkspace(workspaceId, dto.estateId)
+      : null;
 
     const scope = dto.scope || InspectionScope.UNIT;
     const block = dto.block?.trim() || null;
     const floor = dto.floor?.trim() || null;
 
     let unitId: string | null = null;
-    if (scope === InspectionScope.UNIT) {
+    if (scope === InspectionScope.UNIT && ws.templateType !== TemplateType.OFFICE) {
       if (!dto.unitId) throw new BadRequestException('unitId is required for UNIT inspections');
       const unit = ws.templateType === TemplateType.ESTATE
         ? await this.prisma.estateUnit.findFirst({ where: { id: dto.unitId, workspaceId, ...(resolvedEstateId ? { estateId: resolvedEstateId } : {}) } })
@@ -277,7 +309,7 @@ export class OperationsService {
     inspectionId: string,
     dto: { status?: InspectionStatus; result?: string },
   ) {
-    await this.assertPropertyWorkspace(workspaceId);
+    await this.assertOperationsWorkspace(workspaceId);
     const row = await this.prisma.inspection.findFirst({ where: { id: inspectionId, workspaceId } });
     if (!row) throw new NotFoundException('Inspection not found');
 

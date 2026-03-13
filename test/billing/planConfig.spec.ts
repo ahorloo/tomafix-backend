@@ -2,60 +2,56 @@ import { PLAN_MAP } from '../../src/billing/planConfig';
 
 describe('PLAN_MAP snapshot', () => {
   it('matches expected config', () => {
-    expect(PLAN_MAP).toMatchInlineSnapshot(`
-      {
-        "Starter": {
-          "currency": "GHS",
-          "features": {
-            "advancedReports": false,
-            "blocks": false,
-            "earlyAccess": false,
-            "exports": false,
-            "prioritySupport": false,
-            "staff": false,
-          },
-          "limits": {
-            "properties": 1,
-            "units": 20,
-          },
-          "notes": [
-            "Upgrade anytime",
-          ],
-          "pricePesewas": 7900,
+    expect(PLAN_MAP).toEqual({
+      Starter: {
+        pricePesewas: 9900,
+        currency: 'GHS',
+        limits: {
+          properties: 1,
+          units: 20,
         },
-        "Growth": {
-          "currency": "GHS",
-          "features": {
-            "advancedReports": false,
-            "blocks": true,
-            "earlyAccess": false,
-            "exports": false,
-            "prioritySupport": false,
-            "staff": true,
-          },
-          "limits": {
-            "properties": 3,
-            "units": 120,
-          },
-          "pricePesewas": 14900,
+        features: {
+          blocks: false,
+          staff: false,
+          advancedReports: false,
+          exports: false,
+          prioritySupport: false,
+          earlyAccess: false,
         },
-        "TomaPrime": {
-          "currency": "GHS",
-          "features": {
-            "advancedReports": true,
-            "blocks": true,
-            "earlyAccess": true,
-            "exports": true,
-            "prioritySupport": true,
-            "staff": true,
-          },
-          "limits": {
-            "properties": 5,
-            "units": 250,
-          },
-          "pricePesewas": 29900,
+        notes: ['Upgrade anytime'],
+      },
+      Growth: {
+        pricePesewas: 19900,
+        currency: 'GHS',
+        limits: {
+          properties: 3,
+          units: 120,
         },
-      }
-    `);
+        features: {
+          blocks: true,
+          staff: true,
+          advancedReports: false,
+          exports: false,
+          prioritySupport: false,
+          earlyAccess: false,
+        },
+      },
+      TomaPrime: {
+        pricePesewas: 39900,
+        currency: 'GHS',
+        limits: {
+          properties: 5,
+          units: 250,
+        },
+        features: {
+          blocks: true,
+          staff: true,
+          advancedReports: true,
+          exports: true,
+          prioritySupport: true,
+          earlyAccess: true,
+        },
+      },
+    });
   });
 });

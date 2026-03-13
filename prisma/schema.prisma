@@ -109,6 +109,22 @@ enum NoticeAudience {
   STAFF
 }
 
+enum OfficeAreaType {
+  FLOOR
+  OFFICE
+  MEETING_ROOM
+  SERVER_ROOM
+  RECEPTION
+  RESTROOM
+  CAFETERIA
+  OTHER
+}
+
+enum OfficeRequestCategory {
+  FACILITY
+  IT
+}
+
 enum InspectionStatus {
   SCHEDULED
   IN_PROGRESS
@@ -178,6 +194,9 @@ model Workspace {
   officeWorkOrders         OfficeWorkOrder[]
   apartmentRequestMessages ApartmentRequestMessage[]
   estateRequestMessages    EstateRequestMessage[]
+  officeAreas              OfficeArea[]
+  officeRequests           OfficeRequest[]
+  officeRequestMessages    OfficeRequestMessage[]
 
   @@index([status])
   @@index([ownerUserId])
@@ -632,15 +651,84 @@ model EstateRequestMessage {
   @@index([createdAt])
 }
 
-model OfficeAsset {
-  id          String   @id @default(cuid())
+model OfficeArea {
+  id          String         @id @default(cuid())
   workspaceId String
   name        String
-  category    String?
-  serialNo    String?
-  status      String   @default("ACTIVE")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  type        OfficeAreaType @default(OTHER)
+  floor       String?
+  description String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  workspace        Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  officeRequests   OfficeRequest[]
+  officeWorkOrders OfficeWorkOrder[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+  @@index([workspaceId, type])
+}
+
+model OfficeRequest {
+  id              String                @id @default(cuid())
+  workspaceId     String
+  areaId          String
+  submitterUserId String?
+  submitterName   String
+  category        OfficeRequestCategory @default(FACILITY)
+  title           String
+  description     String?
+  photoUrl        String?
+  priority        RequestPriority       @default(NORMAL)
+  status          RequestStatus         @default(PENDING)
+  workOrderId     String?
+  slaDeadline     DateTime?
+  resolvedAt      DateTime?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  workspace Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  area      OfficeArea             @relation(fields: [areaId], references: [id], onDelete: Cascade)
+  messages  OfficeRequestMessage[]
+
+  @@index([workspaceId])
+  @@index([areaId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, category])
+  @@index([workspaceId, status, createdAt])
+}
+
+model OfficeRequestMessage {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  requestId    String
+  senderUserId String?
+  senderName   String
+  body         String
+  createdAt    DateTime @default(now())
+
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  request   OfficeRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([requestId])
+  @@index([workspaceId, requestId, createdAt])
+}
+
+model OfficeAsset {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  name           String
+  category       String?
+  serialNo       String?
+  location       String?
+  status         String    @default("ACTIVE")
+  lastServicedAt DateTime?
+  nextServiceAt  DateTime?
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   workspace        Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   officeWorkOrders OfficeWorkOrder[]
@@ -650,20 +738,30 @@ model OfficeAsset {
 }
 
 model OfficeWorkOrder {
-  id          String   @id @default(cuid())
-  workspaceId String
-  assetId     String?
-  title       String
-  description String?
-  status      String   @default("OPEN")
-  priority    String   @default("NORMAL")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id               String                @id @default(cuid())
+  workspaceId      String
+  areaId           String?
+  assetId          String?
+  assignedToUserId String?
+  category         OfficeRequestCategory @default(FACILITY)
+  title            String
+  description      String?
+  status           String                @default("OPEN")
+  priority         RequestPriority       @default(NORMAL)
+  slaDeadline      DateTime?
+  completionNote   String?
+  proofPhotoUrl    String?
+  closedAt         DateTime?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
 
-  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  area      OfficeArea? @relation(fields: [areaId], references: [id], onDelete: SetNull)
   asset     OfficeAsset? @relation(fields: [assetId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId])
+  @@index([areaId])
   @@index([assetId])
   @@index([workspaceId, status])
+  @@index([workspaceId, assignedToUserId])
 }
