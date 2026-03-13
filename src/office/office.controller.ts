@@ -20,6 +20,7 @@ import { CreateAreaDto } from './dto/create-area.dto';
 import { CreateOfficeRequestDto } from './dto/create-request.dto';
 import { CreateWorkOrderDto } from './dto/create-work-order.dto';
 import { CreateAssetDto } from './dto/create-asset.dto';
+import { CreateOfficeRequestTypeDto } from './dto/create-request-type.dto';
 
 @UseGuards(AuthGuard, WorkspaceAccessGuard)
 @Controller('workspaces/:workspaceId/office')
@@ -63,6 +64,33 @@ export class OfficeController {
   @Delete('areas/:areaId')
   deleteArea(@Param('workspaceId') workspaceId: string, @Param('areaId') areaId: string) {
     return this.office.deleteArea(workspaceId, areaId);
+  }
+
+  // ─── Request Types ─────────────────────────────────────────────────────────
+  @WorkspacePermission('requests:view')
+  @Get('request-types')
+  listRequestTypes(@Param('workspaceId') workspaceId: string) {
+    return this.office.listRequestTypes(workspaceId);
+  }
+
+  @WorkspacePermission('requests:create')
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
+  @Post('request-types')
+  createRequestType(
+    @Param('workspaceId') workspaceId: string,
+    @Body() dto: CreateOfficeRequestTypeDto,
+  ) {
+    return this.office.createRequestType(workspaceId, dto);
+  }
+
+  @WorkspacePermission('requests:create')
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
+  @Delete('request-types/:requestTypeId')
+  deactivateRequestType(
+    @Param('workspaceId') workspaceId: string,
+    @Param('requestTypeId') requestTypeId: string,
+  ) {
+    return this.office.deactivateRequestType(workspaceId, requestTypeId);
   }
 
   // ─── Requests ───────────────────────────────────────────────────────────────

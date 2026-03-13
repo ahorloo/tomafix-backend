@@ -19,6 +19,7 @@ import { CreateAreaDto } from './dto/create-area.dto';
 import { CreateOfficeRequestDto } from './dto/create-request.dto';
 import { CreateWorkOrderDto } from './dto/create-work-order.dto';
 import { CreateAssetDto } from './dto/create-asset.dto';
+import { CreateOfficeRequestTypeDto } from './dto/create-request-type.dto';
 
 @Injectable()
 export class OfficeService {
@@ -264,6 +265,38 @@ export class OfficeService {
 
   // ─── Requests ─────────────────────────────────────────────────────────────
 
+  async listRequestTypes(workspaceId: string) {
+    await this.assertOfficeWorkspace(workspaceId);
+    return this.prisma.officeRequestType.findMany({
+      where: { workspaceId, isActive: true },
+      orderBy: [{ createdAt: 'asc' }],
+    });
+  }
+
+  async createRequestType(workspaceId: string, dto: CreateOfficeRequestTypeDto) {
+    await this.assertOfficeWorkspace(workspaceId);
+    const label = dto.label?.trim();
+    if (!label) throw new BadRequestException('label is required');
+
+    return this.prisma.officeRequestType.create({
+      data: {
+        workspaceId,
+        label,
+        baseCategory: dto.baseCategory ?? OfficeRequestCategory.FACILITY,
+        slaHours: dto.slaHours ?? null,
+      },
+    });
+  }
+
+  async deactivateRequestType(workspaceId: string, requestTypeId: string) {
+    await this.assertOfficeWorkspace(workspaceId);
+    const row = await this.prisma.officeRequestType.findFirst({ where: { id: requestTypeId, workspaceId } });
+    if (!row) throw new NotFoundException('Request type not found');
+
+    await this.prisma.officeRequestType.update({ where: { id: requestTypeId }, data: { isActive: false } });
+    return { ok: true };
+  }
+
   async listRequests(
     workspaceId: string,
     opts?: { status?: string; category?: string; areaId?: string; escalated?: string },
@@ -278,7 +311,10 @@ export class OfficeService {
     const rows = await this.prisma.officeRequest.findMany({
       where,
       orderBy: { createdAt: 'desc' },
-      include: { area: { select: { id: true, name: true, type: true } } },
+      include: {
+        area: { select: { id: true, name: true, type: true } },
+        requestType: { select: { id: true, label: true, baseCategory: true } },
+      },
     });
 
     const now = Date.now();
@@ -304,6 +340,7 @@ export class OfficeService {
       where: { id: requestId, workspaceId },
       include: {
         area: { select: { id: true, name: true, type: true } },
+        requestType: { select: { id: true, label: true, baseCategory: true } },
         messages: { orderBy: { createdAt: 'asc' } },
       },
     });
@@ -330,9 +367,28 @@ export class OfficeService {
     }
     if (!submitterName) submitterName = 'Staff';
 
-    const category = dto.category ?? OfficeRequestCategory.FACILITY;
+    let requestTypeId: string | null = null;
+    let category = dto.category ?? OfficeRequestCategory.FACILITY;
+
+    if (dto.requestTypeId?.trim()) {
+      const type = await this.prisma.officeRequestType.findFirst({
+        where: { id: dto.requestTypeId.trim(), workspaceId, isActive: true },
+      });
+      if (!type) throw new BadRequestException('requestTypeId is invalid for this workspace');
+      requestTypeId = type.id;
+      category = type.baseCategory;
+    }
+
     const priority = dto.priority ?? RequestPriority.NORMAL;
-    const requestSlaDeadline = this.computeSlaDeadline(category, priority);
+    const requestSlaDeadline = requestTypeId
+      ? await (async () => {
+          const t = await this.prisma.officeRequestType.findUnique({ where: { id: requestTypeId! } });
+          if (t?.slaHours && t.slaHours > 0) {
+            return new Date(Date.now() + t.slaHours * 60 * 60 * 1000);
+          }
+          return this.computeSlaDeadline(category, priority);
+        })()
+      : this.computeSlaDeadline(category, priority);
 
     return this.prisma.$transaction(async (tx) => {
       const created = await tx.officeRequest.create({
@@ -341,6 +397,7 @@ export class OfficeService {
           areaId: dto.areaId,
           submitterUserId: actorUserId || null,
           submitterName,
+          requestTypeId,
           category,
           title: dto.title.trim(),
           description: dto.description?.trim() || null,
@@ -374,7 +431,10 @@ export class OfficeService {
 
       const out = await tx.officeRequest.findFirst({
         where: { id: created.id, workspaceId },
-        include: { area: { select: { id: true, name: true, type: true } } },
+        include: {
+          area: { select: { id: true, name: true, type: true } },
+          requestType: { select: { id: true, label: true, baseCategory: true } },
+        },
       });
       if (!out) throw new NotFoundException('Request not found after create');
       return out;

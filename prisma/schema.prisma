@@ -200,6 +200,7 @@ model Workspace {
   estateRequestMessages    EstateRequestMessage[]
   officeAreas              OfficeArea[]
   officeRequests           OfficeRequest[]
+  officeRequestTypes       OfficeRequestType[]
   officeRequestMessages    OfficeRequestMessage[]
 
   @@index([status])
@@ -680,6 +681,7 @@ model OfficeRequest {
   id              String                @id @default(cuid())
   workspaceId     String
   areaId          String
+  requestTypeId   String?
   submitterUserId String?
   submitterName   String
   category        OfficeRequestCategory @default(FACILITY)
@@ -694,15 +696,34 @@ model OfficeRequest {
   createdAt       DateTime              @default(now())
   updatedAt       DateTime              @updatedAt
 
-  workspace Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  area      OfficeArea             @relation(fields: [areaId], references: [id], onDelete: Cascade)
-  messages  OfficeRequestMessage[]
+  workspace    Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  area         OfficeArea         @relation(fields: [areaId], references: [id], onDelete: Cascade)
+  requestType  OfficeRequestType? @relation(fields: [requestTypeId], references: [id], onDelete: SetNull)
+  messages     OfficeRequestMessage[]
 
   @@index([workspaceId])
   @@index([areaId])
+  @@index([requestTypeId])
   @@index([workspaceId, status])
   @@index([workspaceId, category])
   @@index([workspaceId, status, createdAt])
+}
+
+model OfficeRequestType {
+  id            String                @id @default(cuid())
+  workspaceId   String
+  label         String
+  baseCategory  OfficeRequestCategory @default(FACILITY)
+  isActive      Boolean               @default(true)
+  slaHours      Int?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  requests  OfficeRequest[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, isActive])
 }
 
 model OfficeRequestMessage {
