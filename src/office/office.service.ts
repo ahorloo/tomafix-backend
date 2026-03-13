@@ -41,6 +41,23 @@ export class OfficeService {
     return 'TomaPrime';
   }
 
+  private getSlaHours(category: OfficeRequestCategory, priority: RequestPriority) {
+    const matrix: Record<OfficeRequestCategory, Record<RequestPriority, number>> = {
+      FACILITY: { LOW: 96, NORMAL: 72, HIGH: 24, URGENT: 8 },
+      IT: { LOW: 72, NORMAL: 48, HIGH: 12, URGENT: 4 },
+      ADMIN: { LOW: 72, NORMAL: 48, HIGH: 16, URGENT: 8 },
+      HR: { LOW: 120, NORMAL: 72, HIGH: 24, URGENT: 8 },
+      PROCUREMENT: { LOW: 168, NORMAL: 96, HIGH: 48, URGENT: 24 },
+      CLEANING: { LOW: 48, NORMAL: 24, HIGH: 8, URGENT: 4 },
+    };
+    return matrix[category]?.[priority] ?? 48;
+  }
+
+  private computeSlaDeadline(category: OfficeRequestCategory, priority: RequestPriority, from = new Date()) {
+    const hours = this.getSlaHours(category, priority);
+    return new Date(from.getTime() + hours * 60 * 60 * 1000);
+  }
+
   private async assertOfficeAreasPlanLimit(workspaceId: string) {
     const ws = await this.assertOfficeWorkspace(workspaceId);
     const planName = resolvePlanName((ws as any).planName || 'Starter');
@@ -267,6 +284,7 @@ export class OfficeService {
 
     const category = dto.category ?? OfficeRequestCategory.FACILITY;
     const priority = dto.priority ?? RequestPriority.NORMAL;
+    const requestSlaDeadline = this.computeSlaDeadline(category, priority);
 
     return this.prisma.$transaction(async (tx) => {
       const created = await tx.officeRequest.create({
@@ -280,6 +298,7 @@ export class OfficeService {
           description: dto.description?.trim() || null,
           photoUrl: dto.photoUrl?.trim() || null,
           priority,
+          slaDeadline: requestSlaDeadline,
           status: RequestStatus.PENDING,
         },
       });
@@ -294,6 +313,7 @@ export class OfficeService {
             title: created.title,
             description: created.description,
             priority,
+            slaDeadline: requestSlaDeadline,
             status: 'OPEN',
           },
         });
@@ -427,17 +447,23 @@ export class OfficeService {
       if (!asset) throw new BadRequestException('assetId does not belong to this workspace');
     }
 
+    const category = dto.category ?? OfficeRequestCategory.FACILITY;
+    const priority = dto.priority ?? RequestPriority.NORMAL;
+    const slaDeadline = dto.slaDeadline
+      ? new Date(dto.slaDeadline)
+      : this.computeSlaDeadline(category, priority);
+
     return this.prisma.officeWorkOrder.create({
       data: {
         workspaceId,
         areaId: dto.areaId || null,
         assetId: dto.assetId || null,
         assignedToUserId: dto.assignedToUserId || null,
-        category: dto.category ?? OfficeRequestCategory.FACILITY,
+        category,
         title: dto.title.trim(),
         description: dto.description?.trim() || null,
-        priority: dto.priority ?? RequestPriority.NORMAL,
-        slaDeadline: dto.slaDeadline ? new Date(dto.slaDeadline) : null,
+        priority,
+        slaDeadline,
         status: 'OPEN',
       },
       include: {
