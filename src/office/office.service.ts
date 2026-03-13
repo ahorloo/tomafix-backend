@@ -255,7 +255,7 @@ export class OfficeService {
 
   async listRequests(
     workspaceId: string,
-    opts?: { status?: string; category?: string; areaId?: string },
+    opts?: { status?: string; category?: string; areaId?: string; escalated?: string },
   ) {
     await this.assertOfficeWorkspace(workspaceId);
 
@@ -264,11 +264,27 @@ export class OfficeService {
     if (opts?.category) where.category = opts.category as OfficeRequestCategory;
     if (opts?.areaId) where.areaId = opts.areaId;
 
-    return this.prisma.officeRequest.findMany({
+    const rows = await this.prisma.officeRequest.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       include: { area: { select: { id: true, name: true, type: true } } },
     });
+
+    const now = Date.now();
+    const escalatedRows = rows.map((r) => ({
+      ...r,
+      isEscalated:
+        r.status !== RequestStatus.RESOLVED &&
+        r.status !== RequestStatus.CLOSED &&
+        !!r.slaDeadline &&
+        r.slaDeadline.getTime() < now - 24 * 60 * 60 * 1000,
+    }));
+
+    if (String(opts?.escalated || '').toLowerCase() === 'true') {
+      return escalatedRows.filter((r) => r.isEscalated);
+    }
+
+    return escalatedRows;
   }
 
   async getRequest(workspaceId: string, requestId: string) {

@@ -73,8 +73,9 @@ export class OfficeController {
     @Query('status') status?: string,
     @Query('category') category?: string,
     @Query('areaId') areaId?: string,
+    @Query('escalated') escalated?: string,
   ) {
-    return this.office.listRequests(workspaceId, { status, category, areaId });
+    return this.office.listRequests(workspaceId, { status, category, areaId, escalated });
   }
 
   @WorkspacePermission('requests:view')
