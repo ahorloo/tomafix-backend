@@ -95,7 +95,7 @@ export class OfficeService {
   async getDashboard(workspaceId: string) {
     await this.assertOfficeWorkspace(workspaceId);
 
-    const [requestBuckets, openWorkOrders, totalAreas, totalAssets, recentRequests, activeSlaRows] =
+    const [requestBuckets, openWorkOrders, totalAreas, totalAssets, recentRequests, activeSlaRows, escalatedQueue] =
       await Promise.all([
         this.prisma.officeRequest.groupBy({
           by: ['status'],
@@ -121,6 +121,16 @@ export class OfficeService {
           },
           select: { slaDeadline: true },
           take: 500,
+        }),
+        this.prisma.officeRequest.findMany({
+          where: {
+            workspaceId,
+            status: { in: [RequestStatus.PENDING, RequestStatus.IN_PROGRESS] },
+            slaDeadline: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+          },
+          include: { area: { select: { id: true, name: true, type: true } } },
+          orderBy: { slaDeadline: 'asc' },
+          take: 5,
         }),
       ]);
 
@@ -149,6 +159,7 @@ export class OfficeService {
       areas: { total: totalAreas },
       assets: { total: totalAssets },
       recentRequests,
+      escalatedQueue,
     };
   }
 
