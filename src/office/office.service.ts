@@ -133,6 +133,7 @@ export class OfficeService {
 
     const now = Date.now();
     const overdue = activeSlaRows.filter((r) => r.slaDeadline && r.slaDeadline.getTime() < now).length;
+    const criticalOverdue = activeSlaRows.filter((r) => r.slaDeadline && r.slaDeadline.getTime() < now - 24 * 60 * 60 * 1000).length;
     const due24h = activeSlaRows.filter((r) => {
       if (!r.slaDeadline) return false;
       const t = r.slaDeadline.getTime();
@@ -140,9 +141,10 @@ export class OfficeService {
     }).length;
     const open = pending + inProgress;
     const onTrack = Math.max(open - overdue, 0);
+    const slaCompliancePct = open > 0 ? Math.round((onTrack / open) * 100) : 100;
 
     return {
-      requests: { pending, inProgress, resolved, open, overdue, due24h, onTrack },
+      requests: { pending, inProgress, resolved, open, overdue, criticalOverdue, due24h, onTrack, slaCompliancePct },
       workOrders: { open: openWorkOrders },
       areas: { total: totalAreas },
       assets: { total: totalAssets },
