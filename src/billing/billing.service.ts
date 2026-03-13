@@ -107,22 +107,34 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       },
       OFFICE: {
         starter: {
-          summary: 'For small office facilities',
-          priceText: 'GH₵ 99 / month',
-          bullets: ['Basic work orders', 'Asset register', 'Inspection schedules'],
-          amountPesewas: 9900,
+          summary: 'For essential office operations',
+          priceText: 'GH₵ 149 / month',
+          bullets: [
+            'Up to 10 areas',
+            'Up to 25 assets',
+            'Requests, work orders, notices, inspections, and office community',
+          ],
+          amountPesewas: 14900,
         },
         growth: {
-          summary: 'For scaling office operations',
-          priceText: 'GH₵ 199 / month',
-          bullets: ['Departments + SLAs', 'Team assignments', 'Operational reports'],
-          amountPesewas: 19900,
+          summary: 'For teams that need accountability and speed',
+          priceText: 'GH₵ 349 / month',
+          bullets: [
+            'Up to 35 areas',
+            'Up to 150 assets',
+            'PM schedules, request types, leaderboard, QR/public requests, exports',
+          ],
+          amountPesewas: 34900,
         },
         tomaprime: {
-          summary: 'For enterprise office operations',
-          priceText: 'GH₵ 399 / month',
-          bullets: ['Multi-site offices', 'Advanced workflows', 'Priority support'],
-          amountPesewas: 39900,
+          summary: 'For large office operations with premium controls',
+          priceText: 'GH₵ 699 / month',
+          bullets: [
+            'Up to 120 areas',
+            'Up to 500 assets',
+            'Integrations, advanced reports, and priority support',
+          ],
+          amountPesewas: 69900,
         },
       },
     };
@@ -136,9 +148,6 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
 
     // Auto-bootstrap per-template plans if missing
     for (const t of templates) {
-      const count = await this.prisma.plan.count({ where: { templateId: t.id } });
-      if (count > 0) continue;
-
       const defaults =
         t.key === 'APARTMENT'
           ? [
@@ -153,12 +162,35 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
                 { name: 'Toma Prime', amountPesewas: 69900 },
               ]
             : [
-                { name: 'Starter', amountPesewas: 9900 },
-                { name: 'Growth', amountPesewas: 19900 },
-                { name: 'Toma Prime', amountPesewas: 39900 },
+                { name: 'Starter', amountPesewas: 14900 },
+                { name: 'Growth', amountPesewas: 34900 },
+                { name: 'Toma Prime', amountPesewas: 69900 },
               ];
 
+      const legacyDefaults =
+        t.key === 'OFFICE'
+          ? new Map<string, number>([
+              ['Starter', 9900],
+              ['Growth', 19900],
+              ['Toma Prime', 39900],
+            ])
+          : null;
+
       for (const p of defaults) {
+        const existing = await this.prisma.plan.findUnique({
+          where: { templateId_name_interval: { templateId: t.id, name: p.name, interval: PlanInterval.MONTHLY } },
+        });
+
+        if (existing && legacyDefaults?.get(p.name) === existing.amountPesewas) {
+          await this.prisma.plan.update({
+            where: { id: existing.id },
+            data: { amountPesewas: p.amountPesewas, currency: 'GHS', isActive: true },
+          });
+          continue;
+        }
+
+        if (existing) continue;
+
         await this.prisma.plan.upsert({
           where: { templateId_name_interval: { templateId: t.id, name: p.name, interval: PlanInterval.MONTHLY } },
           update: { amountPesewas: p.amountPesewas, currency: 'GHS', isActive: true },

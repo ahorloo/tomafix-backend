@@ -5,6 +5,11 @@ type PlanLimits = { properties: number; units: number };
 type PlanFeatures = {
   blocks: boolean;
   staff: boolean;
+  requestTypes: boolean;
+  preventiveMaintenance: boolean;
+  leaderboard: boolean;
+  integrations: boolean;
+  publicRequests: boolean;
   advancedReports: boolean;
   exports: boolean;
   prioritySupport: boolean;
@@ -27,6 +32,11 @@ export const PLAN_MAP: Record<PlanName, PlanConfig> = {
     features: {
       blocks: false,
       staff: false,
+      requestTypes: false,
+      preventiveMaintenance: false,
+      leaderboard: false,
+      integrations: false,
+      publicRequests: false,
       advancedReports: false,
       exports: false,
       prioritySupport: false,
@@ -41,6 +51,11 @@ export const PLAN_MAP: Record<PlanName, PlanConfig> = {
     features: {
       blocks: true,
       staff: true,
+      requestTypes: false,
+      preventiveMaintenance: false,
+      leaderboard: false,
+      integrations: false,
+      publicRequests: false,
       advancedReports: false,
       exports: false,
       prioritySupport: false,
@@ -54,6 +69,11 @@ export const PLAN_MAP: Record<PlanName, PlanConfig> = {
     features: {
       blocks: true,
       staff: true,
+      requestTypes: false,
+      preventiveMaintenance: false,
+      leaderboard: false,
+      integrations: false,
+      publicRequests: false,
       advancedReports: true,
       exports: true,
       prioritySupport: true,
@@ -78,9 +98,63 @@ const TEMPLATE_LIMIT_OVERRIDES: Partial<Record<TemplateType, Record<PlanName, Pl
   },
   // OFFICE: properties = number of office locations, units = number of areas/departments
   OFFICE: {
-    Starter: { properties: 1, units: 10 },
-    Growth: { properties: 3, units: 50 },
-    TomaPrime: { properties: 10, units: 200 },
+    Starter: { properties: 25, units: 10 },
+    Growth: { properties: 150, units: 35 },
+    TomaPrime: { properties: 500, units: 120 },
+  },
+};
+
+const TEMPLATE_PRICE_OVERRIDES: Partial<Record<TemplateType, Record<PlanName, number>>> = {
+  ESTATE: {
+    Starter: 19900,
+    Growth: 34900,
+    TomaPrime: 69900,
+  },
+  OFFICE: {
+    Starter: 14900,
+    Growth: 34900,
+    TomaPrime: 69900,
+  },
+};
+
+const TEMPLATE_FEATURE_OVERRIDES: Partial<Record<TemplateType, Record<PlanName, Partial<PlanFeatures>>>> = {
+  OFFICE: {
+    Starter: {
+      staff: true,
+      requestTypes: false,
+      preventiveMaintenance: false,
+      leaderboard: false,
+      integrations: false,
+      publicRequests: false,
+      advancedReports: false,
+      exports: false,
+      prioritySupport: false,
+      earlyAccess: false,
+    },
+    Growth: {
+      staff: true,
+      requestTypes: true,
+      preventiveMaintenance: true,
+      leaderboard: true,
+      integrations: true,
+      publicRequests: true,
+      advancedReports: true,
+      exports: true,
+      prioritySupport: false,
+      earlyAccess: false,
+    },
+    TomaPrime: {
+      staff: true,
+      requestTypes: true,
+      preventiveMaintenance: true,
+      leaderboard: true,
+      integrations: true,
+      publicRequests: true,
+      advancedReports: true,
+      exports: true,
+      prioritySupport: true,
+      earlyAccess: true,
+    },
   },
 };
 
@@ -105,6 +179,15 @@ export function assertPlanExists(planName: string): asserts planName is PlanName
 export function getEntitlements(planName: PlanName, templateType?: TemplateType) {
   const base = PLAN_MAP[planName];
   const override = templateType ? TEMPLATE_LIMIT_OVERRIDES[templateType]?.[planName] : undefined;
-  if (!override) return base;
-  return { ...base, limits: override };
+  const priceOverride = templateType ? TEMPLATE_PRICE_OVERRIDES[templateType]?.[planName] : undefined;
+  const featureOverride = templateType ? TEMPLATE_FEATURE_OVERRIDES[templateType]?.[planName] : undefined;
+
+  if (!override && !featureOverride && !priceOverride) return base;
+
+  return {
+    ...base,
+    pricePesewas: priceOverride ?? base.pricePesewas,
+    limits: override ?? base.limits,
+    features: featureOverride ? { ...base.features, ...featureOverride } : base.features,
+  };
 }

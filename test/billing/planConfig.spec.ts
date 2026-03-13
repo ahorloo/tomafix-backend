@@ -1,4 +1,5 @@
-import { PLAN_MAP } from '../../src/billing/planConfig';
+import { TemplateType } from '@prisma/client';
+import { PLAN_MAP, getEntitlements } from '../../src/billing/planConfig';
 
 describe('PLAN_MAP snapshot', () => {
   it('matches expected config', () => {
@@ -13,6 +14,11 @@ describe('PLAN_MAP snapshot', () => {
         features: {
           blocks: false,
           staff: false,
+          requestTypes: false,
+          preventiveMaintenance: false,
+          leaderboard: false,
+          integrations: false,
+          publicRequests: false,
           advancedReports: false,
           exports: false,
           prioritySupport: false,
@@ -30,6 +36,11 @@ describe('PLAN_MAP snapshot', () => {
         features: {
           blocks: true,
           staff: true,
+          requestTypes: false,
+          preventiveMaintenance: false,
+          leaderboard: false,
+          integrations: false,
+          publicRequests: false,
           advancedReports: false,
           exports: false,
           prioritySupport: false,
@@ -46,6 +57,11 @@ describe('PLAN_MAP snapshot', () => {
         features: {
           blocks: true,
           staff: true,
+          requestTypes: false,
+          preventiveMaintenance: false,
+          leaderboard: false,
+          integrations: false,
+          publicRequests: false,
           advancedReports: true,
           exports: true,
           prioritySupport: true,
@@ -53,5 +69,11 @@ describe('PLAN_MAP snapshot', () => {
         },
       },
     });
+  });
+
+  it('applies office-specific price overrides', () => {
+    expect(getEntitlements('Starter', TemplateType.OFFICE).pricePesewas).toBe(14900);
+    expect(getEntitlements('Growth', TemplateType.OFFICE).pricePesewas).toBe(34900);
+    expect(getEntitlements('TomaPrime', TemplateType.OFFICE).pricePesewas).toBe(69900);
   });
 });

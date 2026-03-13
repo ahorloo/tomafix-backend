@@ -23,6 +23,7 @@ import { CreateOfficeRequestDto } from './dto/create-request.dto';
 import { CreateWorkOrderDto } from './dto/create-work-order.dto';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { CreateOfficeRequestTypeDto } from './dto/create-request-type.dto';
+import { FeatureKey } from '../types/billing';
 
 const OFFICE_COMMUNITY_CHANNELS: Array<{
   key: OfficeCommunityChannelKey;
@@ -72,6 +73,23 @@ export class OfficeService {
       throw new BadRequestException('This endpoint is only available for OFFICE workspaces');
     }
     return ws;
+  }
+
+  private async assertOfficeFeature(workspaceId: string, feature: FeatureKey, lockedMessage: string) {
+    const ws = await this.assertOfficeWorkspace(workspaceId);
+    const planName = resolvePlanName((ws as any).planName || 'Starter');
+    const entitlements = getEntitlements(planName, ws.templateType);
+
+    if (entitlements.features[feature]) {
+      return { ws, planName, entitlements };
+    }
+
+    throw new ForbiddenException({
+      code: 'FEATURE_LOCKED',
+      message: lockedMessage,
+      requiredPlan: this.nextPlan(planName),
+      context: { feature },
+    } as any);
   }
 
   private nextPlan(planName: 'Starter' | 'Growth' | 'TomaPrime') {
@@ -405,6 +423,11 @@ export class OfficeService {
 
   async createRequestType(workspaceId: string, dto: CreateOfficeRequestTypeDto) {
     await this.assertOfficeWorkspace(workspaceId);
+    await this.assertOfficeFeature(
+      workspaceId,
+      'requestTypes',
+      'Custom office request types are available on Growth and above.',
+    );
     const label = dto.label?.trim();
     if (!label) throw new BadRequestException('label is required');
 
@@ -420,6 +443,11 @@ export class OfficeService {
 
   async deactivateRequestType(workspaceId: string, requestTypeId: string) {
     await this.assertOfficeWorkspace(workspaceId);
+    await this.assertOfficeFeature(
+      workspaceId,
+      'requestTypes',
+      'Custom office request types are available on Growth and above.',
+    );
     const row = await this.prisma.officeRequestType.findFirst({ where: { id: requestTypeId, workspaceId } });
     if (!row) throw new NotFoundException('Request type not found');
 
@@ -809,6 +837,17 @@ export class OfficeService {
   async createAsset(workspaceId: string, dto: CreateAssetDto) {
     await this.assertOfficeWorkspace(workspaceId);
     await this.assertOfficeAssetsPlanLimit(workspaceId);
+    if (
+      dto.pmIntervalDays !== undefined ||
+      dto.pmAutoCreate === true ||
+      dto.costPerService !== undefined
+    ) {
+      await this.assertOfficeFeature(
+        workspaceId,
+        'preventiveMaintenance',
+        'Preventive maintenance fields are available on Growth and above.',
+      );
+    }
     return this.prisma.officeAsset.create({
       data: {
         workspaceId,
@@ -829,6 +868,17 @@ export class OfficeService {
 
   async updateAsset(workspaceId: string, assetId: string, dto: Partial<CreateAssetDto> & { status?: string }) {
     await this.assertOfficeWorkspace(workspaceId);
+    if (
+      dto.pmIntervalDays !== undefined ||
+      dto.pmAutoCreate === true ||
+      dto.costPerService !== undefined
+    ) {
+      await this.assertOfficeFeature(
+        workspaceId,
+        'preventiveMaintenance',
+        'Preventive maintenance fields are available on Growth and above.',
+      );
+    }
     const asset = await this.prisma.officeAsset.findFirst({
       where: { id: assetId, workspaceId },
     });
@@ -1017,6 +1067,11 @@ export class OfficeService {
 
   async getLeaderboard(workspaceId: string) {
     await this.assertOfficeWorkspace(workspaceId);
+    await this.assertOfficeFeature(
+      workspaceId,
+      'leaderboard',
+      'Technician leaderboard is available on Growth and above.',
+    );
 
     const closed = await this.prisma.officeWorkOrder.findMany({
       where: { workspaceId, status: 'CLOSED', assignedToUserId: { not: null } },
@@ -1059,6 +1114,16 @@ export class OfficeService {
     const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
     if (!ws) throw new NotFoundException('Workspace not found');
     if (ws.templateType !== 'OFFICE') throw new BadRequestException('Public requests only available for OFFICE workspaces');
+    const planName = resolvePlanName((ws as any).planName || 'Starter');
+    const entitlements = getEntitlements(planName, ws.templateType);
+    if (!entitlements.features.publicRequests) {
+      throw new ForbiddenException({
+        code: 'FEATURE_LOCKED',
+        message: 'Public QR requests are available on Growth and above.',
+        requiredPlan: this.nextPlan(planName),
+        context: { feature: 'publicRequests' },
+      } as any);
+    }
 
     const area = await this.prisma.officeArea.findFirst({ where: { id: dto.areaId, workspaceId } });
     if (!area) throw new BadRequestException('Area not found');
@@ -1106,6 +1171,11 @@ export class OfficeService {
 
   async updateIntegrations(workspaceId: string, dto: { slackWebhookUrl?: string; outboundWebhookUrl?: string }) {
     await this.assertOfficeWorkspace(workspaceId);
+    await this.assertOfficeFeature(
+      workspaceId,
+      'integrations',
+      'Office integrations are available on Growth and above.',
+    );
     return this.prisma.workspace.update({
       where: { id: workspaceId },
       data: {
@@ -1118,9 +1188,38 @@ export class OfficeService {
 
   async getIntegrations(workspaceId: string) {
     await this.assertOfficeWorkspace(workspaceId);
+    await this.assertOfficeFeature(
+      workspaceId,
+      'integrations',
+      'Office integrations are available on Growth and above.',
+    );
     return this.prisma.workspace.findUnique({
       where: { id: workspaceId },
       select: { id: true, slackWebhookUrl: true, outboundWebhookUrl: true },
     });
+  }
+
+  async getPublicWorkspaceInfo(workspaceId: string) {
+    const ws = await this.prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { id: true, name: true, templateType: true, status: true, planName: true },
+    });
+    if (!ws || ws.templateType !== 'OFFICE' || ws.status !== 'ACTIVE') {
+      throw new NotFoundException('Workspace not available');
+    }
+
+    const planName = resolvePlanName((ws as any).planName || 'Starter');
+    const entitlements = getEntitlements(planName, ws.templateType);
+    if (!entitlements.features.publicRequests) {
+      throw new NotFoundException('Workspace not available');
+    }
+
+    const areas = await this.prisma.officeArea.findMany({
+      where: { workspaceId },
+      select: { id: true, name: true, type: true, floor: true },
+      orderBy: [{ type: 'asc' }, { name: 'asc' }],
+    });
+
+    return { workspace: { id: ws.id, name: ws.name }, areas };
   }
 }

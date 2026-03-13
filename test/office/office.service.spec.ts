@@ -182,4 +182,67 @@ describe('OfficeService notifications', () => {
       }),
     ).rejects.toThrow('Only owner admins and managers can post in Office Updates');
   });
+
+  it('locks preventive maintenance asset fields on Starter office plans', async () => {
+    const prisma: any = {
+      workspace: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'ws-1',
+          templateType: TemplateType.OFFICE,
+          planName: 'Starter',
+        }),
+      },
+      officeAsset: {
+        count: jest.fn().mockResolvedValue(0),
+      },
+    };
+    const mail: any = {
+      sendWoAssigned: jest.fn(),
+      sendRequestStatusUpdate: jest.fn(),
+    };
+
+    const service = new OfficeService(prisma, mail);
+
+    await expect(
+      service.createAsset('ws-1', {
+        name: 'Generator',
+        pmAutoCreate: true,
+      } as any),
+    ).rejects.toThrow('Preventive maintenance fields are available on Growth and above.');
+  });
+
+  it('allows core asset creation on Starter when PM is left disabled', async () => {
+    const prisma: any = {
+      workspace: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValueOnce({
+            id: 'ws-1',
+            templateType: TemplateType.OFFICE,
+          })
+          .mockResolvedValueOnce({
+            id: 'ws-1',
+            templateType: TemplateType.OFFICE,
+            planName: 'Starter',
+          }),
+      },
+      officeAsset: {
+        count: jest.fn().mockResolvedValue(0),
+        create: jest.fn().mockResolvedValue({ id: 'asset-1', name: 'Printer' }),
+      },
+    };
+    const mail: any = {
+      sendWoAssigned: jest.fn(),
+      sendRequestStatusUpdate: jest.fn(),
+    };
+
+    const service = new OfficeService(prisma, mail);
+
+    await expect(
+      service.createAsset('ws-1', {
+        name: 'Printer',
+        pmAutoCreate: false,
+      } as any),
+    ).resolves.toEqual({ id: 'asset-1', name: 'Printer' });
+  });
 });
