@@ -648,7 +648,7 @@ export class OnboardingService {
         data: {
           ownerVerifiedAt: now,
           status: targetStatus,
-          ...(bypassPaymentForLocal ? { billingStatus: BillingStatus.ACTIVE } : {}),
+          billingStatus: bypassPaymentForLocal ? BillingStatus.ACTIVE : BillingStatus.PENDING_PAYMENT,
         },
       }),
     ]);

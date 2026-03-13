@@ -129,6 +129,13 @@ enum OfficeRequestCategory {
   CLEANING
 }
 
+enum OfficeCommunityChannelKey {
+  GENERAL_HELP
+  ADMIN_HELP
+  COVERAGE
+  UPDATES
+}
+
 enum InspectionStatus {
   SCHEDULED
   IN_PROGRESS
@@ -194,14 +201,21 @@ model Workspace {
   estateUnits              EstateUnit[]
   estateResidents          EstateResident[]
   estateRequests           EstateRequest[]
-  officeAssets             OfficeAsset[]
-  officeWorkOrders         OfficeWorkOrder[]
-  apartmentRequestMessages ApartmentRequestMessage[]
-  estateRequestMessages    EstateRequestMessage[]
-  officeAreas              OfficeArea[]
-  officeRequests           OfficeRequest[]
-  officeRequestTypes       OfficeRequestType[]
-  officeRequestMessages    OfficeRequestMessage[]
+  officeAssets                OfficeAsset[]
+  officeWorkOrders            OfficeWorkOrder[]
+  apartmentRequestMessages    ApartmentRequestMessage[]
+  estateRequestMessages       EstateRequestMessage[]
+  officeAreas                 OfficeArea[]
+  officeRequests              OfficeRequest[]
+  officeRequestTypes          OfficeRequestType[]
+  officeRequestMessages       OfficeRequestMessage[]
+  officeWorkOrderMessages     OfficeWorkOrderMessage[]
+  officeCommunityChannels     OfficeCommunityChannel[]
+  officeCommunityMessages     OfficeCommunityMessage[]
+
+  // Integrations
+  slackWebhookUrl    String?
+  outboundWebhookUrl String?
 
   @@index([status])
   @@index([ownerUserId])
@@ -744,24 +758,31 @@ model OfficeRequestMessage {
 }
 
 model OfficeAsset {
-  id             String    @id @default(cuid())
-  workspaceId    String
-  name           String
-  category       String?
-  serialNo       String?
-  location       String?
-  status         String    @default("ACTIVE")
-  lastServicedAt DateTime?
-  nextServiceAt  DateTime?
-  notes          String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id               String    @id @default(cuid())
+  workspaceId      String
+  name             String
+  category         String?
+  serialNo         String?
+  location         String?
+  status           String    @default("ACTIVE")
+  lastServicedAt   DateTime?
+  nextServiceAt    DateTime?
+  notes            String?
+  // Preventive maintenance scheduling
+  pmIntervalDays   Int?      // null = no recurring PM
+  pmAutoCreate     Boolean   @default(false)
+  // Cost tracking
+  costPerService   Float?
+  totalCostLogged  Float?    @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   workspace        Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   officeWorkOrders OfficeWorkOrder[]
 
   @@index([workspaceId])
   @@index([workspaceId, status])
+  @@index([workspaceId, pmAutoCreate])
 }
 
 model OfficeWorkOrder {
@@ -785,10 +806,63 @@ model OfficeWorkOrder {
   workspace Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   area      OfficeArea? @relation(fields: [areaId], references: [id], onDelete: SetNull)
   asset     OfficeAsset? @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  messages  OfficeWorkOrderMessage[]
 
   @@index([workspaceId])
   @@index([areaId])
   @@index([assetId])
   @@index([workspaceId, status])
   @@index([workspaceId, assignedToUserId])
+}
+
+model OfficeWorkOrderMessage {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  workOrderId  String
+  senderUserId String?
+  senderName   String
+  body         String
+  createdAt    DateTime @default(now())
+
+  workspace  Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workOrder  OfficeWorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([workOrderId])
+  @@index([workspaceId, workOrderId, createdAt])
+}
+
+model OfficeCommunityChannel {
+  id          String                    @id @default(cuid())
+  workspaceId String
+  key         OfficeCommunityChannelKey
+  name        String
+  description String?
+  createdAt   DateTime                  @default(now())
+  updatedAt   DateTime                  @updatedAt
+
+  workspace Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  messages  OfficeCommunityMessage[]
+
+  @@unique([workspaceId, key])
+  @@index([workspaceId])
+  @@index([workspaceId, key])
+}
+
+model OfficeCommunityMessage {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  channelId    String
+  senderUserId String?
+  senderName   String
+  body         String
+  isPinned     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  workspace Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel   OfficeCommunityChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([channelId])
+  @@index([workspaceId, channelId, createdAt])
 }

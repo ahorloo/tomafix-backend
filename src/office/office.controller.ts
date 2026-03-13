@@ -250,4 +250,86 @@ export class OfficeController {
   deleteAsset(@Param('workspaceId') workspaceId: string, @Param('assetId') assetId: string) {
     return this.office.deleteAsset(workspaceId, assetId);
   }
+
+  // ─── Work Order Messages ─────────────────────────────────────────────────
+  @WorkspacePermission('requests:view')
+  @Get('work-orders/:workOrderId/messages')
+  listWorkOrderMessages(
+    @Param('workspaceId') workspaceId: string,
+    @Param('workOrderId') workOrderId: string,
+  ) {
+    return this.office.listWorkOrderMessages(workspaceId, workOrderId);
+  }
+
+  @WorkspacePermission('requests:create')
+  @Post('work-orders/:workOrderId/messages')
+  addWorkOrderMessage(
+    @Param('workspaceId') workspaceId: string,
+    @Param('workOrderId') workOrderId: string,
+    @Req() req: any,
+    @Body() dto: { body: string; senderName?: string },
+  ) {
+    return this.office.addWorkOrderMessage(workspaceId, workOrderId, {
+      senderUserId: req.authUserId,
+      senderName: dto.senderName,
+      body: dto.body,
+    });
+  }
+
+  // ─── Office Community ────────────────────────────────────────────────────
+  @WorkspacePermission('requests:view')
+  @Get('community/channels')
+  listCommunityChannels(@Param('workspaceId') workspaceId: string) {
+    return this.office.listCommunityChannels(workspaceId);
+  }
+
+  @WorkspacePermission('requests:view')
+  @Get('community/channels/:channelId/messages')
+  listCommunityMessages(
+    @Param('workspaceId') workspaceId: string,
+    @Param('channelId') channelId: string,
+  ) {
+    return this.office.listCommunityMessages(workspaceId, channelId);
+  }
+
+  @WorkspacePermission('requests:create')
+  @Post('community/channels/:channelId/messages')
+  addCommunityMessage(
+    @Param('workspaceId') workspaceId: string,
+    @Param('channelId') channelId: string,
+    @Req() req: any,
+    @Body() dto: { body: string; senderName?: string; isPinned?: boolean },
+  ) {
+    return this.office.addCommunityMessage(workspaceId, channelId, {
+      senderUserId: req.authUserId,
+      senderName: dto.senderName,
+      body: dto.body,
+      isPinned: dto.isPinned,
+      actorRole: req.workspaceContext?.role,
+    });
+  }
+
+  // ─── Leaderboard ─────────────────────────────────────────────────────────
+  @WorkspacePermission('dashboard:view')
+  @Get('leaderboard')
+  getLeaderboard(@Param('workspaceId') workspaceId: string) {
+    return this.office.getLeaderboard(workspaceId);
+  }
+
+  // ─── Integrations ────────────────────────────────────────────────────────
+  @WorkspacePermission('dashboard:view')
+  @Get('integrations')
+  getIntegrations(@Param('workspaceId') workspaceId: string) {
+    return this.office.getIntegrations(workspaceId);
+  }
+
+  @WorkspacePermission('units:manage')
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN)
+  @Patch('integrations')
+  updateIntegrations(
+    @Param('workspaceId') workspaceId: string,
+    @Body() dto: { slackWebhookUrl?: string; outboundWebhookUrl?: string },
+  ) {
+    return this.office.updateIntegrations(workspaceId, dto);
+  }
 }

@@ -20,7 +20,7 @@ export class WorkspaceMembersController {
   @Post('staff')
   createStaff(
     @Param('workspaceId') workspaceId: string,
-    @Body() dto: { fullName: string; email: string },
+    @Body() dto: { fullName: string; email: string; role?: MemberRole },
   ) {
     return this.auth.createWorkspaceStaff(workspaceId, dto);
   }

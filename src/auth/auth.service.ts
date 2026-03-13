@@ -186,9 +186,10 @@ export class AuthService {
     });
   }
 
-  async createWorkspaceStaff(workspaceId: string, dto: { fullName: string; email: string }) {
+  async createWorkspaceStaff(workspaceId: string, dto: { fullName: string; email: string; role?: MemberRole }) {
     const fullName = String(dto.fullName || '').trim();
     const email = String(dto.email || '').trim().toLowerCase();
+    const requestedRole = dto.role === MemberRole.TECHNICIAN ? MemberRole.TECHNICIAN : MemberRole.STAFF;
     if (!fullName) throw new BadRequestException('fullName is required');
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       throw new BadRequestException('Valid email is required');
@@ -205,8 +206,8 @@ export class AuthService {
 
     const member = await this.prisma.workspaceMember.upsert({
       where: { workspaceId_userId: { workspaceId, userId: user.id } },
-      update: { role: MemberRole.STAFF, isActive: true },
-      create: { workspaceId, userId: user.id, role: MemberRole.STAFF, isActive: true },
+      update: { role: requestedRole, isActive: true },
+      create: { workspaceId, userId: user.id, role: requestedRole, isActive: true },
       include: { user: { select: { id: true, email: true, fullName: true } } },
     });
 
@@ -214,19 +215,20 @@ export class AuthService {
       data: {
         workspaceId,
         actorUserId: null,
-        action: 'staff.created',
-        meta: { email, fullName, userId: user.id },
+        action: 'workspace.member.created',
+        meta: { email, fullName, userId: user.id, role: requestedRole },
       },
     });
 
     try {
       const appUrl = (process.env.APP_BASE_URL || process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/+$/, '');
+      const roleLabel = requestedRole === MemberRole.TECHNICIAN ? 'Technician' : 'Staff';
       await this.sendEmailWithResend({
         to: email,
-        subject: `You've been added as staff on TomaFix`,
+        subject: `You've been added as ${roleLabel.toLowerCase()} on TomaFix`,
         html: `
           <p>Hi ${fullName || 'there'},</p>
-          <p>You have been added as a <strong>Staff</strong> member for <strong>${ws.name}</strong> on TomaFix.</p>
+          <p>You have been added as a <strong>${roleLabel}</strong> member for <strong>${ws.name}</strong> on TomaFix.</p>
           <p>Use this email to sign in and verify with OTP:</p>
           <p><a href="${appUrl}/login" target="_blank" rel="noreferrer">Go to login</a></p>
           <p>If this wasn’t expected, ignore this email.</p>

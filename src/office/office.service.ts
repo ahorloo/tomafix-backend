@@ -8,24 +8,62 @@ import {
 } from '@nestjs/common';
 import {
   OfficeRequestCategory,
+  OfficeCommunityChannelKey,
   Prisma,
   RequestPriority,
   RequestStatus,
   TemplateType,
+  MemberRole,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { getEntitlements, resolvePlanName } from '../billing/planConfig';
+import { MailService } from '../mail/mail.service';
 import { CreateAreaDto } from './dto/create-area.dto';
 import { CreateOfficeRequestDto } from './dto/create-request.dto';
 import { CreateWorkOrderDto } from './dto/create-work-order.dto';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { CreateOfficeRequestTypeDto } from './dto/create-request-type.dto';
 
+const OFFICE_COMMUNITY_CHANNELS: Array<{
+  key: OfficeCommunityChannelKey;
+  name: string;
+  description: string;
+  postingMode: 'everyone' | 'managers';
+}> = [
+  {
+    key: OfficeCommunityChannelKey.GENERAL_HELP,
+    name: 'General Help',
+    description: 'Quick office questions, shared help, and small day-to-day coordination.',
+    postingMode: 'everyone',
+  },
+  {
+    key: OfficeCommunityChannelKey.ADMIN_HELP,
+    name: 'Admin Help',
+    description: 'Approvals, stationery, logistics, reimbursements, and office support questions.',
+    postingMode: 'everyone',
+  },
+  {
+    key: OfficeCommunityChannelKey.COVERAGE,
+    name: 'Today / Availability',
+    description: 'Shift cover, front desk handoff, who is available, and quick coverage updates.',
+    postingMode: 'everyone',
+  },
+  {
+    key: OfficeCommunityChannelKey.UPDATES,
+    name: 'Office Updates',
+    description: 'Fast operational updates from owners and managers without creating a formal notice.',
+    postingMode: 'managers',
+  },
+];
+
 @Injectable()
 export class OfficeService {
   private readonly logger = new Logger(OfficeService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mail: MailService,
+  ) {}
 
   private async assertOfficeWorkspace(workspaceId: string) {
     const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
@@ -57,6 +95,98 @@ export class OfficeService {
   private computeSlaDeadline(category: OfficeRequestCategory, priority: RequestPriority, from = new Date()) {
     const hours = this.getSlaHours(category, priority);
     return new Date(from.getTime() + hours * 60 * 60 * 1000);
+  }
+
+  private async getUserContact(userId?: string | null) {
+    if (!userId) return null;
+    return this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, fullName: true },
+    });
+  }
+
+  private async notifyWorkOrderAssignment(workspaceId: string, assignedToUserId: string | null | undefined, woTitle: string) {
+    const assignee = await this.getUserContact(assignedToUserId);
+    if (!assignee?.email) return;
+
+    await this.mail.sendWoAssigned(
+      assignee.email,
+      assignee.fullName || assignee.email,
+      woTitle,
+      workspaceId,
+    );
+  }
+
+  private async notifyRequestStatusChange(
+    workspaceId: string,
+    submitterUserId: string | null | undefined,
+    requestTitle: string,
+    nextStatus: RequestStatus,
+  ) {
+    const requester = await this.getUserContact(submitterUserId);
+    if (!requester?.email) return;
+
+    await this.mail.sendRequestStatusUpdate(
+      requester.email,
+      requester.fullName || requester.email,
+      requestTitle,
+      nextStatus,
+      workspaceId,
+    );
+  }
+
+  private isOfficeCommunityManager(role?: MemberRole | string | null) {
+    return role === MemberRole.OWNER_ADMIN || role === MemberRole.MANAGER;
+  }
+
+  private sortCommunityChannels<T extends { key: OfficeCommunityChannelKey }>(rows: T[]) {
+    const order = new Map(
+      OFFICE_COMMUNITY_CHANNELS.map((channel, index) => [channel.key, index] as const),
+    );
+    return [...rows].sort((a, b) => (order.get(a.key) ?? 99) - (order.get(b.key) ?? 99));
+  }
+
+  private async ensureCommunityChannels(workspaceId: string) {
+    await this.assertOfficeWorkspace(workspaceId);
+
+    const existing = await this.prisma.officeCommunityChannel.findMany({
+      where: { workspaceId },
+      select: { key: true },
+    });
+    const existingKeys = new Set(existing.map((channel) => channel.key));
+    const missing = OFFICE_COMMUNITY_CHANNELS.filter((channel) => !existingKeys.has(channel.key));
+
+    if (missing.length > 0) {
+      await this.prisma.officeCommunityChannel.createMany({
+        data: missing.map((channel) => ({
+          workspaceId,
+          key: channel.key,
+          name: channel.name,
+          description: channel.description,
+        })),
+        skipDuplicates: true,
+      });
+    }
+
+    const channels = await this.prisma.officeCommunityChannel.findMany({
+      where: { workspaceId },
+      include: {
+        _count: { select: { messages: true } },
+        messages: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            id: true,
+            body: true,
+            createdAt: true,
+            senderName: true,
+            isPinned: true,
+          },
+        },
+      },
+    });
+
+    return this.sortCommunityChannels(channels);
   }
 
   private async assertOfficeAreasPlanLimit(workspaceId: string) {
@@ -390,7 +520,7 @@ export class OfficeService {
         })()
       : this.computeSlaDeadline(category, priority);
 
-    return this.prisma.$transaction(async (tx) => {
+    const createdRequest = await this.prisma.$transaction(async (tx) => {
       const created = await tx.officeRequest.create({
         data: {
           workspaceId,
@@ -439,6 +569,16 @@ export class OfficeService {
       if (!out) throw new NotFoundException('Request not found after create');
       return out;
     });
+
+    if (area.ownerUserId) {
+      try {
+        await this.notifyWorkOrderAssignment(workspaceId, area.ownerUserId, createdRequest.title);
+      } catch (e: any) {
+        this.logger.warn(`Work order assignment email failed after request create: ${e?.message || e}`);
+      }
+    }
+
+    return createdRequest;
   }
 
   async updateRequest(
@@ -460,7 +600,7 @@ export class OfficeService {
     const resolvedAt =
       dto.status === RequestStatus.RESOLVED && !req.resolvedAt ? new Date() : undefined;
 
-    return this.prisma.officeRequest.update({
+    const updated = await this.prisma.officeRequest.update({
       where: { id: requestId },
       data: {
         status: dto.status ?? undefined,
@@ -471,6 +611,16 @@ export class OfficeService {
       },
       include: { area: { select: { id: true, name: true, type: true } } },
     });
+
+    if (dto.status && dto.status !== req.status) {
+      try {
+        await this.notifyRequestStatusChange(workspaceId, req.submitterUserId, req.title, dto.status);
+      } catch (e: any) {
+        this.logger.warn(`Request status email failed: ${e?.message || e}`);
+      }
+    }
+
+    return updated;
   }
 
   // ─── Request Messages ─────────────────────────────────────────────────────
@@ -561,7 +711,7 @@ export class OfficeService {
       ? new Date(dto.slaDeadline)
       : this.computeSlaDeadline(category, priority);
 
-    return this.prisma.officeWorkOrder.create({
+    const created = await this.prisma.officeWorkOrder.create({
       data: {
         workspaceId,
         areaId: dto.areaId || null,
@@ -579,6 +729,16 @@ export class OfficeService {
         asset: { select: { id: true, name: true, category: true } },
       },
     });
+
+    if (dto.assignedToUserId) {
+      try {
+        await this.notifyWorkOrderAssignment(workspaceId, dto.assignedToUserId, created.title);
+      } catch (e: any) {
+        this.logger.warn(`Work order assignment email failed: ${e?.message || e}`);
+      }
+    }
+
+    return created;
   }
 
   async updateWorkOrder(
@@ -601,7 +761,7 @@ export class OfficeService {
     const closedAt =
       dto.status === 'CLOSED' && !wo.closedAt ? new Date() : undefined;
 
-    return this.prisma.officeWorkOrder.update({
+    const updated = await this.prisma.officeWorkOrder.update({
       where: { id: workOrderId },
       data: {
         status: dto.status ?? undefined,
@@ -619,6 +779,20 @@ export class OfficeService {
         asset: { select: { id: true, name: true, category: true } },
       },
     });
+
+    if (
+      dto.assignedToUserId !== undefined &&
+      dto.assignedToUserId &&
+      dto.assignedToUserId !== wo.assignedToUserId
+    ) {
+      try {
+        await this.notifyWorkOrderAssignment(workspaceId, dto.assignedToUserId, updated.title);
+      } catch (e: any) {
+        this.logger.warn(`Work order reassignment email failed: ${e?.message || e}`);
+      }
+    }
+
+    return updated;
   }
 
   // ─── Assets ───────────────────────────────────────────────────────────────
@@ -646,6 +820,9 @@ export class OfficeService {
         lastServicedAt: dto.lastServicedAt ? new Date(dto.lastServicedAt) : null,
         nextServiceAt: dto.nextServiceAt ? new Date(dto.nextServiceAt) : null,
         status: 'ACTIVE',
+        pmIntervalDays: dto.pmIntervalDays ?? null,
+        pmAutoCreate: dto.pmAutoCreate ?? false,
+        costPerService: dto.costPerService ?? null,
       },
     });
   }
@@ -678,6 +855,9 @@ export class OfficeService {
               ? new Date(dto.nextServiceAt)
               : null
             : undefined,
+        pmIntervalDays: dto.pmIntervalDays !== undefined ? dto.pmIntervalDays : undefined,
+        pmAutoCreate: dto.pmAutoCreate !== undefined ? dto.pmAutoCreate : undefined,
+        costPerService: dto.costPerService !== undefined ? dto.costPerService : undefined,
       },
     });
   }
@@ -700,5 +880,247 @@ export class OfficeService {
 
     await this.prisma.officeAsset.delete({ where: { id: assetId } });
     return { ok: true };
+  }
+
+  // ─── Work Order Messages ──────────────────────────────────────────────────
+
+  async listWorkOrderMessages(workspaceId: string, workOrderId: string) {
+    await this.assertOfficeWorkspace(workspaceId);
+    const wo = await this.prisma.officeWorkOrder.findFirst({ where: { id: workOrderId, workspaceId } });
+    if (!wo) throw new NotFoundException('Work order not found');
+    return this.prisma.officeWorkOrderMessage.findMany({
+      where: { workspaceId, workOrderId },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  async addWorkOrderMessage(
+    workspaceId: string,
+    workOrderId: string,
+    dto: { senderUserId?: string; senderName?: string; body: string },
+  ) {
+    await this.assertOfficeWorkspace(workspaceId);
+    const wo = await this.prisma.officeWorkOrder.findFirst({ where: { id: workOrderId, workspaceId } });
+    if (!wo) throw new NotFoundException('Work order not found');
+
+    const body = String(dto.body || '').trim();
+    if (!body) throw new BadRequestException('Message body is required');
+
+    let senderName = dto.senderName?.trim();
+    if (!senderName && dto.senderUserId) {
+      const user = await this.prisma.user.findUnique({ where: { id: dto.senderUserId } });
+      senderName = user?.fullName || user?.email || 'User';
+    }
+
+    return this.prisma.officeWorkOrderMessage.create({
+      data: { workspaceId, workOrderId, senderUserId: dto.senderUserId || null, senderName: senderName || 'User', body },
+    });
+  }
+
+  // ─── Office Community ────────────────────────────────────────────────────
+
+  async listCommunityChannels(workspaceId: string) {
+    const channels = await this.ensureCommunityChannels(workspaceId);
+
+    return channels.map((channel) => {
+      const config = OFFICE_COMMUNITY_CHANNELS.find((item) => item.key === channel.key);
+      return {
+        id: channel.id,
+        key: channel.key,
+        name: channel.name,
+        description: channel.description,
+        postingMode: config?.postingMode ?? 'everyone',
+        messageCount: channel._count.messages,
+        latestMessage: channel.messages[0] || null,
+      };
+    });
+  }
+
+  async listCommunityMessages(workspaceId: string, channelId: string) {
+    await this.ensureCommunityChannels(workspaceId);
+
+    const channel = await this.prisma.officeCommunityChannel.findFirst({
+      where: { id: channelId, workspaceId },
+    });
+    if (!channel) throw new NotFoundException('Community channel not found');
+
+    const config = OFFICE_COMMUNITY_CHANNELS.find((item) => item.key === channel.key);
+    const messages = await this.prisma.officeCommunityMessage.findMany({
+      where: { workspaceId, channelId },
+      orderBy: [{ isPinned: 'desc' }, { createdAt: 'asc' }],
+    });
+
+    return {
+      channel: {
+        id: channel.id,
+        key: channel.key,
+        name: channel.name,
+        description: channel.description,
+        postingMode: config?.postingMode ?? 'everyone',
+      },
+      messages,
+    };
+  }
+
+  async addCommunityMessage(
+    workspaceId: string,
+    channelId: string,
+    dto: {
+      senderUserId?: string;
+      senderName?: string;
+      body: string;
+      isPinned?: boolean;
+      actorRole?: MemberRole | string | null;
+    },
+  ) {
+    await this.ensureCommunityChannels(workspaceId);
+
+    const channel = await this.prisma.officeCommunityChannel.findFirst({
+      where: { id: channelId, workspaceId },
+    });
+    if (!channel) throw new NotFoundException('Community channel not found');
+
+    const body = String(dto.body || '').trim();
+    if (!body) throw new BadRequestException('Message body is required');
+    if (body.length > 1200) throw new BadRequestException('Message body is too long');
+
+    if (
+      channel.key === OfficeCommunityChannelKey.UPDATES &&
+      !this.isOfficeCommunityManager(dto.actorRole)
+    ) {
+      throw new ForbiddenException('Only owner admins and managers can post in Office Updates');
+    }
+
+    if (dto.isPinned && !this.isOfficeCommunityManager(dto.actorRole)) {
+      throw new ForbiddenException('Only owner admins and managers can pin office community messages');
+    }
+
+    let senderName = dto.senderName?.trim();
+    if (!senderName && dto.senderUserId) {
+      const user = await this.prisma.user.findUnique({ where: { id: dto.senderUserId } });
+      senderName = user?.fullName || user?.email || 'User';
+    }
+
+    return this.prisma.officeCommunityMessage.create({
+      data: {
+        workspaceId,
+        channelId,
+        senderUserId: dto.senderUserId || null,
+        senderName: senderName || 'User',
+        body,
+        isPinned: !!dto.isPinned,
+      },
+    });
+  }
+
+  // ─── Leaderboard ─────────────────────────────────────────────────────────
+
+  async getLeaderboard(workspaceId: string) {
+    await this.assertOfficeWorkspace(workspaceId);
+
+    const closed = await this.prisma.officeWorkOrder.findMany({
+      where: { workspaceId, status: 'CLOSED', assignedToUserId: { not: null } },
+      select: { assignedToUserId: true, slaDeadline: true, closedAt: true, createdAt: true },
+    });
+
+    const map = new Map<string, { closed: number; onTime: number; totalMs: number }>();
+    for (const wo of closed) {
+      const uid = wo.assignedToUserId!;
+      if (!map.has(uid)) map.set(uid, { closed: 0, onTime: 0, totalMs: 0 });
+      const entry = map.get(uid)!;
+      entry.closed++;
+      const resolvedAt = wo.closedAt || new Date();
+      entry.totalMs += resolvedAt.getTime() - wo.createdAt.getTime();
+      if (wo.slaDeadline && resolvedAt <= wo.slaDeadline) entry.onTime++;
+    }
+
+    const userIds = [...map.keys()];
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, fullName: true, email: true },
+    });
+
+    return users
+      .map((u) => {
+        const stats = map.get(u.id)!;
+        const avgResolutionHours = stats.closed > 0 ? Math.round(stats.totalMs / stats.closed / 3600000) : 0;
+        const slaRate = stats.closed > 0 ? Math.round((stats.onTime / stats.closed) * 100) : 0;
+        return { userId: u.id, name: u.fullName || u.email || u.id, closed: stats.closed, onTime: stats.onTime, slaRate, avgResolutionHours };
+      })
+      .sort((a, b) => b.closed - a.closed);
+  }
+
+  // ─── Public Request Creation ──────────────────────────────────────────────
+
+  async createPublicRequest(
+    workspaceId: string,
+    dto: { areaId: string; title: string; description?: string; submitterName?: string; category?: string },
+  ) {
+    const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
+    if (!ws) throw new NotFoundException('Workspace not found');
+    if (ws.templateType !== 'OFFICE') throw new BadRequestException('Public requests only available for OFFICE workspaces');
+
+    const area = await this.prisma.officeArea.findFirst({ where: { id: dto.areaId, workspaceId } });
+    if (!area) throw new BadRequestException('Area not found');
+
+    const category = (dto.category as any) || 'FACILITY';
+    const slaHours = 48;
+
+    return this.prisma.$transaction(async (tx) => {
+      const created = await tx.officeRequest.create({
+        data: {
+          workspaceId,
+          areaId: dto.areaId,
+          submitterName: dto.submitterName?.trim() || 'Guest',
+          category,
+          title: dto.title.trim(),
+          description: dto.description?.trim() || null,
+          priority: 'NORMAL',
+          slaDeadline: new Date(Date.now() + slaHours * 3600000),
+          status: 'PENDING',
+        },
+      });
+
+      if (area.ownerUserId) {
+        const wo = await tx.officeWorkOrder.create({
+          data: {
+            workspaceId,
+            areaId: area.id,
+            assignedToUserId: area.ownerUserId,
+            category,
+            title: created.title,
+            description: created.description,
+            priority: 'NORMAL',
+            slaDeadline: new Date(Date.now() + slaHours * 3600000),
+            status: 'OPEN',
+          },
+        });
+        await tx.officeRequest.update({ where: { id: created.id }, data: { workOrderId: wo.id, status: 'IN_PROGRESS' } });
+      }
+
+      return { id: created.id, title: created.title, status: created.status };
+    });
+  }
+
+  // ─── Workspace Integrations ───────────────────────────────────────────────
+
+  async updateIntegrations(workspaceId: string, dto: { slackWebhookUrl?: string; outboundWebhookUrl?: string }) {
+    await this.assertOfficeWorkspace(workspaceId);
+    return this.prisma.workspace.update({
+      where: { id: workspaceId },
+      data: {
+        slackWebhookUrl: dto.slackWebhookUrl !== undefined ? (dto.slackWebhookUrl?.trim() || null) : undefined,
+        outboundWebhookUrl: dto.outboundWebhookUrl !== undefined ? (dto.outboundWebhookUrl?.trim() || null) : undefined,
+      },
+      select: { id: true, slackWebhookUrl: true, outboundWebhookUrl: true },
+    });
+  }
+
+  async getIntegrations(workspaceId: string) {
+    await this.assertOfficeWorkspace(workspaceId);
+    return this.prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { id: true, slackWebhookUrl: true, outboundWebhookUrl: true },
+    });
   }
 }

@@ -178,6 +178,7 @@ describe('OnboardingService', () => {
       where: { id: 'ws-1' },
       data: expect.objectContaining({
         status: WorkspaceStatus.PENDING_PAYMENT,
+        billingStatus: 'PENDING_PAYMENT',
       }),
     });
   });
