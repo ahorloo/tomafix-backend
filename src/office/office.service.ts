@@ -128,6 +128,17 @@ export class OfficeService {
   async createArea(workspaceId: string, dto: CreateAreaDto) {
     await this.assertOfficeWorkspace(workspaceId);
     await this.assertOfficeAreasPlanLimit(workspaceId);
+
+    let ownerUserId: string | null = null;
+    if (dto.ownerUserId?.trim()) {
+      const ownerMembership = await this.prisma.workspaceMember.findFirst({
+        where: { workspaceId, userId: dto.ownerUserId.trim(), isActive: true },
+        select: { userId: true },
+      });
+      if (!ownerMembership) throw new BadRequestException('ownerUserId is not an active member of this workspace');
+      ownerUserId = ownerMembership.userId;
+    }
+
     try {
       return await this.prisma.officeArea.create({
         data: {
@@ -136,6 +147,7 @@ export class OfficeService {
           type: dto.type ?? 'OTHER',
           floor: dto.floor?.trim() || null,
           description: dto.description?.trim() || null,
+          ownerUserId,
         },
       });
     } catch (e: unknown) {
@@ -151,6 +163,20 @@ export class OfficeService {
     const area = await this.prisma.officeArea.findFirst({ where: { id: areaId, workspaceId } });
     if (!area) throw new NotFoundException('Area not found');
 
+    let ownerUserId: string | null | undefined = undefined;
+    if (dto.ownerUserId !== undefined) {
+      if (!dto.ownerUserId?.trim()) {
+        ownerUserId = null;
+      } else {
+        const ownerMembership = await this.prisma.workspaceMember.findFirst({
+          where: { workspaceId, userId: dto.ownerUserId.trim(), isActive: true },
+          select: { userId: true },
+        });
+        if (!ownerMembership) throw new BadRequestException('ownerUserId is not an active member of this workspace');
+        ownerUserId = ownerMembership.userId;
+      }
+    }
+
     try {
       return await this.prisma.officeArea.update({
         where: { id: areaId },
@@ -160,6 +186,7 @@ export class OfficeService {
           floor: dto.floor !== undefined ? (dto.floor?.trim() || null) : undefined,
           description:
             dto.description !== undefined ? (dto.description?.trim() || null) : undefined,
+          ownerUserId,
         },
       });
     } catch (e: unknown) {
@@ -238,20 +265,51 @@ export class OfficeService {
     }
     if (!submitterName) submitterName = 'Staff';
 
-    return this.prisma.officeRequest.create({
-      data: {
-        workspaceId,
-        areaId: dto.areaId,
-        submitterUserId: actorUserId || null,
-        submitterName,
-        category: dto.category ?? OfficeRequestCategory.FACILITY,
-        title: dto.title.trim(),
-        description: dto.description?.trim() || null,
-        photoUrl: dto.photoUrl?.trim() || null,
-        priority: dto.priority ?? RequestPriority.NORMAL,
-        status: RequestStatus.PENDING,
-      },
-      include: { area: { select: { id: true, name: true, type: true } } },
+    const category = dto.category ?? OfficeRequestCategory.FACILITY;
+    const priority = dto.priority ?? RequestPriority.NORMAL;
+
+    return this.prisma.$transaction(async (tx) => {
+      const created = await tx.officeRequest.create({
+        data: {
+          workspaceId,
+          areaId: dto.areaId,
+          submitterUserId: actorUserId || null,
+          submitterName,
+          category,
+          title: dto.title.trim(),
+          description: dto.description?.trim() || null,
+          photoUrl: dto.photoUrl?.trim() || null,
+          priority,
+          status: RequestStatus.PENDING,
+        },
+      });
+
+      if (area.ownerUserId) {
+        const wo = await tx.officeWorkOrder.create({
+          data: {
+            workspaceId,
+            areaId: area.id,
+            assignedToUserId: area.ownerUserId,
+            category,
+            title: created.title,
+            description: created.description,
+            priority,
+            status: 'OPEN',
+          },
+        });
+
+        await tx.officeRequest.update({
+          where: { id: created.id },
+          data: { workOrderId: wo.id, status: RequestStatus.IN_PROGRESS },
+        });
+      }
+
+      const out = await tx.officeRequest.findFirst({
+        where: { id: created.id, workspaceId },
+        include: { area: { select: { id: true, name: true, type: true } } },
+      });
+      if (!out) throw new NotFoundException('Request not found after create');
+      return out;
     });
   }
 

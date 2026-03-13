@@ -5,4 +5,5 @@ export class CreateAreaDto {
   type?: OfficeAreaType;
   floor?: string;
   description?: string;
+  ownerUserId?: string;
 }
