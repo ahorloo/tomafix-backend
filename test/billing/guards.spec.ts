@@ -8,6 +8,7 @@ describe('EntitlementsGuard', () => {
       workspace: {
         findUnique: jest.fn().mockResolvedValue({ id: 'ws1', planName: 'Starter', templateType: TemplateType.APARTMENT }),
       },
+      workspaceMember: { count: jest.fn().mockResolvedValue(0) },
       property: { count: jest.fn().mockResolvedValue(1) },
       apartmentUnit: { count: jest.fn().mockResolvedValue(21) },
     };

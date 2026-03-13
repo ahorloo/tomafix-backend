@@ -1,7 +1,7 @@
 import { TemplateType } from '@prisma/client';
 import { PlanName } from '../types/billing';
 
-type PlanLimits = { properties: number; units: number };
+type PlanLimits = { properties: number; units: number; managers: number };
 type PlanFeatures = {
   blocks: boolean;
   staff: boolean;
@@ -28,7 +28,7 @@ export const PLAN_MAP: Record<PlanName, PlanConfig> = {
   Starter: {
     pricePesewas: 9900,
     currency: 'GHS',
-    limits: { properties: 1, units: 20 },
+    limits: { properties: 1, units: 20, managers: 1 },
     features: {
       blocks: false,
       staff: false,
@@ -47,7 +47,7 @@ export const PLAN_MAP: Record<PlanName, PlanConfig> = {
   Growth: {
     pricePesewas: 19900,
     currency: 'GHS',
-    limits: { properties: 3, units: 120 },
+    limits: { properties: 3, units: 120, managers: 3 },
     features: {
       blocks: true,
       staff: true,
@@ -65,7 +65,7 @@ export const PLAN_MAP: Record<PlanName, PlanConfig> = {
   TomaPrime: {
     pricePesewas: 39900,
     currency: 'GHS',
-    limits: { properties: 5, units: 250 },
+    limits: { properties: 5, units: 250, managers: 8 },
     features: {
       blocks: true,
       staff: true,
@@ -92,15 +92,15 @@ const PLAN_ALIASES: Record<string, PlanName> = {
 
 const TEMPLATE_LIMIT_OVERRIDES: Partial<Record<TemplateType, Record<PlanName, PlanLimits>>> = {
   ESTATE: {
-    Starter: { properties: 2, units: 60 },
-    Growth: { properties: 6, units: 220 },
-    TomaPrime: { properties: 15, units: 600 },
+    Starter: { properties: 2, units: 60, managers: 1 },
+    Growth: { properties: 6, units: 220, managers: 3 },
+    TomaPrime: { properties: 15, units: 600, managers: 8 },
   },
   // OFFICE: properties = number of office locations, units = number of areas/departments
   OFFICE: {
-    Starter: { properties: 25, units: 10 },
-    Growth: { properties: 150, units: 35 },
-    TomaPrime: { properties: 500, units: 120 },
+    Starter: { properties: 25, units: 10, managers: 1 },
+    Growth: { properties: 150, units: 35, managers: 3 },
+    TomaPrime: { properties: 500, units: 120, managers: 10 },
   },
 };
 

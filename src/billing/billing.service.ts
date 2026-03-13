@@ -112,6 +112,7 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
           bullets: [
             'Up to 10 areas',
             'Up to 25 assets',
+            '1 manager seat',
             'Requests, work orders, notices, inspections, and office community',
           ],
           amountPesewas: 14900,
@@ -122,6 +123,7 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
           bullets: [
             'Up to 35 areas',
             'Up to 150 assets',
+            'Up to 3 manager seats',
             'PM schedules, request types, leaderboard, QR/public requests, exports',
           ],
           amountPesewas: 34900,
@@ -132,6 +134,7 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
           bullets: [
             'Up to 120 areas',
             'Up to 500 assets',
+            'Up to 10 manager seats',
             'Integrations, advanced reports, and priority support',
           ],
           amountPesewas: 69900,

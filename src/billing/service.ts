@@ -22,7 +22,7 @@ export class BillingDomainService {
     const planName = (ws as any).planName || 'Starter';
     assertPlanExists(planName);
 
-    const [propertiesUsed, unitsUsed] = await Promise.all([
+    const [propertiesUsed, unitsUsed, managersUsed] = await Promise.all([
       ws.templateType === TemplateType.ESTATE
         ? this.prisma.estate.count({ where: { workspaceId } })
         : ws.templateType === TemplateType.OFFICE
@@ -33,6 +33,9 @@ export class BillingDomainService {
         : ws.templateType === TemplateType.OFFICE
           ? this.prisma.officeArea.count({ where: { workspaceId } })
           : this.prisma.apartmentUnit.count({ where: { workspaceId } }),
+      this.prisma.workspaceMember.count({
+        where: { workspaceId, isActive: true, role: 'MANAGER' as any },
+      }),
     ]);
 
     const plan = getEntitlements(planName, ws.templateType);
@@ -40,7 +43,7 @@ export class BillingDomainService {
     const payload: EntitlementsPayload = {
       planName,
       limits: plan.limits,
-      usage: { propertiesUsed, unitsUsed },
+      usage: { propertiesUsed, unitsUsed, managersUsed },
       features: plan.features,
       billingStatus: (ws as any).billingStatus || mapWorkspaceStatusToBillingStatus(ws.status),
       nextRenewal: (ws as any).nextRenewal ?? null,

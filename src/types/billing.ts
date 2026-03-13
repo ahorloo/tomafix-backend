@@ -22,18 +22,20 @@ export type FeatureKey =
   | 'prioritySupport'
   | 'earlyAccess';
 
-export type LimitKey = 'properties' | 'units';
+export type LimitKey = 'properties' | 'units' | 'managers';
 
 export type FeatureFlags = Record<FeatureKey, boolean>;
 
 export interface EntitlementLimits {
   properties: number;
   units: number;
+  managers: number;
 }
 
 export interface EntitlementUsage {
   propertiesUsed: number;
   unitsUsed: number;
+  managersUsed: number;
 }
 
 export interface EntitlementsPayload {

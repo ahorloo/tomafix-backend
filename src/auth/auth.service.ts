@@ -1,18 +1,26 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
-import { MemberRole, OtpChannel, OtpPurpose } from '@prisma/client';
+import { MemberRole, OtpChannel, OtpPurpose, TemplateType } from '@prisma/client';
 import { defaultPolicyFor, PermissionPolicy } from './permissions';
 import { createHmac, randomBytes, randomInt, scryptSync, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { cacheBust } from '../billing/cache';
+import { getEntitlements, resolvePlanName } from '../billing/planConfig';
 
 type TokenPayload = {
   uid: string;
   exp: number;
   iat: number;
+};
+
+type WorkspaceActor = {
+  userId?: string | null;
+  role?: MemberRole | null;
 };
 
 @Injectable()
@@ -186,10 +194,13 @@ export class AuthService {
     });
   }
 
-  async createWorkspaceStaff(workspaceId: string, dto: { fullName: string; email: string; role?: MemberRole }) {
+  async createWorkspaceStaff(
+    workspaceId: string,
+    dto: { fullName: string; email: string; role?: MemberRole },
+    actor?: WorkspaceActor,
+  ) {
     const fullName = String(dto.fullName || '').trim();
     const email = String(dto.email || '').trim().toLowerCase();
-    const requestedRole = dto.role === MemberRole.TECHNICIAN ? MemberRole.TECHNICIAN : MemberRole.STAFF;
     if (!fullName) throw new BadRequestException('fullName is required');
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       throw new BadRequestException('Valid email is required');
@@ -197,12 +208,27 @@ export class AuthService {
 
     const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
     if (!ws) throw new BadRequestException('Workspace not found');
+    const requestedRole =
+      dto.role === MemberRole.TECHNICIAN
+        ? MemberRole.TECHNICIAN
+        : dto.role === MemberRole.MANAGER
+          ? MemberRole.MANAGER
+          : MemberRole.STAFF;
 
     const user = await this.prisma.user.upsert({
       where: { email },
       update: { fullName },
       create: { email, fullName },
     });
+
+    const existingMembership = await this.prisma.workspaceMember.findUnique({
+      where: { workspaceId_userId: { workspaceId, userId: user.id } },
+      select: { role: true },
+    });
+
+    if (requestedRole === MemberRole.MANAGER && existingMembership?.role !== MemberRole.MANAGER) {
+      await this.assertManagerCapacity(workspaceId, (ws as any).planName || 'Starter', ws.templateType);
+    }
 
     const member = await this.prisma.workspaceMember.upsert({
       where: { workspaceId_userId: { workspaceId, userId: user.id } },
@@ -214,15 +240,26 @@ export class AuthService {
     await this.prisma.auditLog.create({
       data: {
         workspaceId,
-        actorUserId: null,
+        actorUserId: actor?.userId ?? null,
         action: 'workspace.member.created',
-        meta: { email, fullName, userId: user.id, role: requestedRole },
+        meta: {
+          email,
+          fullName,
+          userId: user.id,
+          role: requestedRole,
+          actorRole: actor?.role ?? null,
+        },
       },
     });
 
     try {
       const appUrl = (process.env.APP_BASE_URL || process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/+$/, '');
-      const roleLabel = requestedRole === MemberRole.TECHNICIAN ? 'Technician' : 'Staff';
+      const roleLabel =
+        requestedRole === MemberRole.TECHNICIAN
+          ? 'Technician'
+          : requestedRole === MemberRole.MANAGER
+            ? 'Manager'
+            : 'Staff';
       await this.sendEmailWithResend({
         to: email,
         subject: `You've been added as ${roleLabel.toLowerCase()} on TomaFix`,
@@ -238,23 +275,125 @@ export class AuthService {
       this.logger.warn(`Staff invite email failed (${email}): ${e?.message || e}`);
     }
 
+    await this.notifyOwnerAdmins(
+      workspaceId,
+      `Team member added to ${ws.name}`,
+      `
+        <p>A team member was added to <strong>${ws.name}</strong>.</p>
+        <p><strong>${fullName}</strong> (${email}) was added as <strong>${this.roleLabel(requestedRole)}</strong>.</p>
+        <p>Added by: <strong>${await this.actorLabel(actor?.userId)}</strong></p>
+        <p><a href="${this.appUrl()}/app/${workspaceId}/users" target="_blank" rel="noreferrer">Open Users & Roles</a></p>
+      `,
+    );
+
+    cacheBust(`billing:entitlements:${workspaceId}`);
     return member;
   }
 
-  async updateWorkspaceMember(workspaceId: string, memberId: string, dto: { role?: MemberRole; isActive?: boolean }) {
-    const row = await this.prisma.workspaceMember.findFirst({ where: { id: memberId, workspaceId } });
+  async updateWorkspaceMember(
+    workspaceId: string,
+    memberId: string,
+    dto: { role?: MemberRole; isActive?: boolean },
+    actor?: WorkspaceActor,
+  ) {
+    const [row, ws] = await Promise.all([
+      this.prisma.workspaceMember.findFirst({
+        where: { id: memberId, workspaceId },
+        include: { user: { select: { id: true, email: true, fullName: true } } },
+      }),
+      this.prisma.workspace.findUnique({ where: { id: workspaceId } }),
+    ]);
     if (!row) throw new BadRequestException('Member not found in this workspace');
+    if (!ws) throw new BadRequestException('Workspace not found');
+    if (row.role === MemberRole.OWNER_ADMIN) {
+      throw new ForbiddenException('Owner admins cannot be modified from this page');
+    }
 
-    const normalizedRole = dto.role === MemberRole.MANAGER ? MemberRole.STAFF : dto.role;
+    const actorRole = actor?.role ?? null;
+    const targetRole = row.role;
+    const requestedRoleChange = dto.role !== undefined && dto.role !== row.role;
+    const requestedStatusChange = dto.isActive !== undefined && dto.isActive !== row.isActive;
 
-    return this.prisma.workspaceMember.update({
+    if (!requestedRoleChange && !requestedStatusChange) {
+      return row;
+    }
+
+    if (actorRole === MemberRole.MANAGER) {
+      if (!(targetRole === MemberRole.STAFF || targetRole === MemberRole.TECHNICIAN)) {
+        throw new ForbiddenException('Managers can only remove or restore staff and technicians');
+      }
+      if (requestedRoleChange) {
+        throw new ForbiddenException('Managers cannot change roles. They can only remove or restore staff and technicians');
+      }
+      if (!requestedStatusChange) {
+        throw new ForbiddenException('Managers can only remove or restore staff and technicians');
+      }
+    }
+
+    const nextRole = dto.role ?? row.role;
+    if (nextRole === MemberRole.MANAGER && row.role !== MemberRole.MANAGER) {
+      await this.assertManagerCapacity(workspaceId, (ws as any).planName || 'Starter', ws.templateType);
+    }
+
+    const updated = await this.prisma.workspaceMember.update({
       where: { id: memberId },
       data: {
-        role: normalizedRole ?? undefined,
+        role: nextRole ?? undefined,
         isActive: dto.isActive ?? undefined,
       },
       include: { user: { select: { id: true, email: true, fullName: true } } },
     });
+
+    await this.prisma.auditLog.create({
+      data: {
+        workspaceId,
+        actorUserId: actor?.userId ?? null,
+        action: 'workspace.member.updated',
+        meta: {
+          memberId,
+          targetUserId: row.user.id,
+          before: { role: row.role, isActive: row.isActive },
+          after: { role: updated.role, isActive: updated.isActive },
+          actorRole,
+        },
+      },
+    });
+
+    if (actorRole === MemberRole.MANAGER && requestedStatusChange) {
+      const statusVerb = updated.isActive ? 'restored' : 'removed';
+      await this.notifyOwnerAdmins(
+        workspaceId,
+        `Manager ${statusVerb} a team member in ${ws.name}`,
+        `
+          <p>A manager updated a team member in <strong>${ws.name}</strong>.</p>
+          <p><strong>${await this.actorLabel(actor?.userId)}</strong> ${statusVerb} <strong>${row.user.fullName || row.user.email || row.user.id}</strong> (${this.roleLabel(targetRole)}).</p>
+          <p>New status: <strong>${updated.isActive ? 'Active' : 'Inactive'}</strong></p>
+          <p><a href="${this.appUrl()}/app/${workspaceId}/users" target="_blank" rel="noreferrer">Review Users & Roles</a></p>
+        `,
+      );
+    }
+
+    cacheBust(`billing:entitlements:${workspaceId}`);
+    return updated;
+  }
+
+  private async assertManagerCapacity(workspaceId: string, rawPlanName: string, templateType: TemplateType) {
+    if (templateType !== TemplateType.OFFICE) return;
+
+    const planName = resolvePlanName(rawPlanName || 'Starter');
+    const limit = getEntitlements(planName, templateType).limits.managers;
+    const used = await this.prisma.workspaceMember.count({
+      where: { workspaceId, isActive: true, role: MemberRole.MANAGER },
+    });
+
+    if (used >= limit) {
+      throw new ForbiddenException({
+        code: 'LIMIT_EXCEEDED',
+        message: `This office workspace already has ${used}/${limit} manager seat(s) in use on ${planName}. Upgrade to add more managers.`,
+        requiredPlan: planName === 'Starter' ? 'Growth' : 'TomaPrime',
+        context: { limit: 'managers' },
+      } as any);
+    }
   }
 
   async getWorkspacePermissionPolicy(workspaceId: string) {
@@ -529,5 +668,56 @@ export class AuthService {
       const text = await res.text().catch(() => '');
       throw new BadRequestException(`Email send failed: ${res.status} ${text || res.statusText}`);
     }
+  }
+
+  private appUrl() {
+    return (process.env.APP_BASE_URL || process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/+$/, '');
+  }
+
+  private roleLabel(role: MemberRole) {
+    switch (role) {
+      case MemberRole.OWNER_ADMIN:
+        return 'Owner Admin';
+      case MemberRole.MANAGER:
+        return 'Manager';
+      case MemberRole.TECHNICIAN:
+        return 'Technician';
+      case MemberRole.STAFF:
+        return 'Staff';
+      case MemberRole.RESIDENT:
+        return 'Resident';
+      default:
+        return String(role);
+    }
+  }
+
+  private async actorLabel(actorUserId?: string | null) {
+    if (!actorUserId) return 'TomaFix';
+    const actor = await this.prisma.user.findUnique({
+      where: { id: actorUserId },
+      select: { fullName: true, email: true },
+    });
+    return actor?.fullName || actor?.email || 'Workspace admin';
+  }
+
+  private async notifyOwnerAdmins(workspaceId: string, subject: string, html: string) {
+    const owners = await this.prisma.workspaceMember.findMany({
+      where: { workspaceId, role: MemberRole.OWNER_ADMIN, isActive: true },
+      include: { user: { select: { email: true } } },
+    });
+
+    const emails = Array.from(
+      new Set(
+        owners
+          .map((owner) => String(owner.user?.email || '').trim().toLowerCase())
+          .filter(Boolean),
+      ),
+    );
+
+    if (!emails.length) return;
+
+    await Promise.allSettled(
+      emails.map((email) => this.sendEmailWithResend({ to: email, subject, html })),
+    );
   }
 }
