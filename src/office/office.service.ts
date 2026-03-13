@@ -95,7 +95,7 @@ export class OfficeService {
   async getDashboard(workspaceId: string) {
     await this.assertOfficeWorkspace(workspaceId);
 
-    const [requestBuckets, openWorkOrders, totalAreas, totalAssets, recentRequests] =
+    const [requestBuckets, openWorkOrders, totalAreas, totalAssets, recentRequests, activeSlaRows] =
       await Promise.all([
         this.prisma.officeRequest.groupBy({
           by: ['status'],
@@ -113,6 +113,15 @@ export class OfficeService {
           take: 6,
           include: { area: { select: { id: true, name: true, type: true } } },
         }),
+        this.prisma.officeRequest.findMany({
+          where: {
+            workspaceId,
+            status: { in: [RequestStatus.PENDING, RequestStatus.IN_PROGRESS] },
+            slaDeadline: { not: null },
+          },
+          select: { slaDeadline: true },
+          take: 500,
+        }),
       ]);
 
     const pending =
@@ -122,8 +131,18 @@ export class OfficeService {
     const resolved =
       requestBuckets.find((r) => r.status === RequestStatus.RESOLVED)?._count._all ?? 0;
 
+    const now = Date.now();
+    const overdue = activeSlaRows.filter((r) => r.slaDeadline && r.slaDeadline.getTime() < now).length;
+    const due24h = activeSlaRows.filter((r) => {
+      if (!r.slaDeadline) return false;
+      const t = r.slaDeadline.getTime();
+      return t >= now && t <= now + 24 * 60 * 60 * 1000;
+    }).length;
+    const open = pending + inProgress;
+    const onTrack = Math.max(open - overdue, 0);
+
     return {
-      requests: { pending, inProgress, resolved, open: pending + inProgress },
+      requests: { pending, inProgress, resolved, open, overdue, due24h, onTrack },
       workOrders: { open: openWorkOrders },
       areas: { total: totalAreas },
       assets: { total: totalAssets },
