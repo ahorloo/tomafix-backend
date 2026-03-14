@@ -56,6 +56,13 @@ export class BillingController {
     return this.billing.handlePaystackWebhook(req.rawBody, headers, body);
   }
 
+  // Called by the frontend payment-success page — verifies reference directly
+  // with Paystack and activates the workspace without needing a webhook.
+  @Post('paystack/verify')
+  verifyPayment(@Body() body: { reference: string }) {
+    return this.billing.verifyAndActivatePayment(body.reference);
+  }
+
   @UseGuards(AuthGuard, WorkspaceAccessGuard)
   @WorkspacePermission('dashboard:view')
   @Get('workspaces/:workspaceId/status')

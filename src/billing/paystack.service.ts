@@ -57,4 +57,34 @@ export class PaystackService {
 
     return json.data;
   }
+
+  async verifyTransaction(reference: string) {
+    const config = getPaystackConfig(process.env);
+
+    const res = await fetch(
+      `${this.baseUrl}/transaction/verify/${encodeURIComponent(reference)}`,
+      {
+        headers: { Authorization: `Bearer ${config.secret}` },
+      },
+    );
+
+    const json = (await res.json()) as {
+      status: boolean;
+      message: string;
+      data?: {
+        status: string; // 'success' | 'failed' | 'abandoned'
+        reference: string;
+        amount: number;
+        currency: string;
+        paid_at: string;
+        metadata?: any;
+      };
+    };
+
+    if (!res.ok || !json.status) {
+      throw new Error(`Paystack verify failed: ${JSON.stringify(json)}`);
+    }
+
+    return json.data;
+  }
 }

@@ -1054,4 +1054,80 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
 
     throw new BadRequestException('Unsupported webhook event type for replay');
   }
+
+  /**
+   * Called by the frontend on the payment-success callback page.
+   * Verifies the reference directly with Paystack and activates the workspace
+   * immediately — no webhook dependency.
+   */
+  async verifyAndActivatePayment(reference: string) {
+    const payment = await this.prisma.payment.findUnique({ where: { reference } });
+    if (!payment) throw new NotFoundException('Payment reference not found');
+
+    // Already activated — idempotent
+    if (payment.status === PaymentStatus.PAID) {
+      const ws = await this.prisma.workspace.findUnique({
+        where: { id: payment.workspaceId },
+        select: { id: true, status: true, billingStatus: true, name: true, templateType: true },
+      });
+      return { ok: true, alreadyActivated: true, workspace: ws };
+    }
+
+    // Hit Paystack directly to confirm the transaction
+    let txn: Awaited<ReturnType<PaystackService['verifyTransaction']>>;
+    try {
+      txn = await this.paystack.verifyTransaction(reference);
+    } catch (err: any) {
+      this.logger.error(`verifyAndActivate: Paystack verify error ref=${reference}: ${err?.message}`);
+      throw new BadGatewayException('Could not verify payment with Paystack');
+    }
+
+    if (!txn || txn.status !== 'success') {
+      return { ok: false, paystackStatus: txn?.status ?? 'unknown' };
+    }
+
+    const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+    await this.prisma.$transaction([
+      this.prisma.payment.update({
+        where: { reference },
+        data: {
+          status: PaymentStatus.PAID,
+          paidAt: txn.paid_at ? new Date(txn.paid_at) : new Date(),
+          updatedAt: new Date(),
+        },
+      }),
+      this.prisma.workspace.update({
+        where: { id: payment.workspaceId },
+        data: {
+          status: WorkspaceStatus.ACTIVE,
+          billingStatus: BillingStatus.ACTIVE,
+          nextRenewal: periodEnd,
+          updatedAt: new Date(),
+        },
+      }),
+      this.prisma.subscription.upsert({
+        where: { workspaceId: payment.workspaceId },
+        create: {
+          workspaceId: payment.workspaceId,
+          status: SubscriptionStatus.ACTIVE,
+          currentPeriodEnd: periodEnd,
+          planId: payment.planId ?? undefined,
+        },
+        update: {
+          status: SubscriptionStatus.ACTIVE,
+          currentPeriodEnd: periodEnd,
+          updatedAt: new Date(),
+        },
+      }),
+    ]);
+
+    const ws = await this.prisma.workspace.findUnique({
+      where: { id: payment.workspaceId },
+      select: { id: true, status: true, billingStatus: true, name: true, templateType: true },
+    });
+
+    this.logger.log(`verifyAndActivate: workspace ${ws?.id} activated via callback verify (ref=${reference})`);
+    return { ok: true, alreadyActivated: false, workspace: ws };
+  }
 }
