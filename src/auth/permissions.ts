@@ -54,6 +54,7 @@ const baseByRole: Record<MemberRole, PermissionKey[]> = {
     'requests:view',
     'requests:create',
     'notices:view',
+    'notices:manage',
     'inspections:view',
     'inspections:manage',
   ],
