@@ -154,6 +154,39 @@ export class MailService {
     );
   }
 
+  sendOnboardingReminder(
+    email: string,
+    ownerName: string,
+    workspaceName: string,
+    templateType: string,
+    step: 'otp' | 'payment',
+    workspaceId: string,
+  ) {
+    const appUrl = this.getAppUrl();
+    const ctaUrl =
+      step === 'otp'
+        ? `${appUrl}/onboarding/otp?workspaceId=${workspaceId}&email=${encodeURIComponent(email)}`
+        : `${appUrl}/billing/start?workspaceId=${workspaceId}`;
+    const ctaLabel = step === 'otp' ? 'Verify My Email' : 'Complete Payment';
+    const stepDesc =
+      step === 'otp'
+        ? 'Your workspace is waiting for email verification. Enter the OTP code we sent you to activate it.'
+        : "Your email is verified but payment wasn't completed. Pick a plan to unlock your workspace.";
+
+    return this.send(
+      email,
+      `Complete your TomaFix setup — ${workspaceName}`,
+      `<p>Hi ${ownerName},</p>
+       <p>You started setting up your <strong>${templateType}</strong> workspace <strong>${workspaceName}</strong> on TomaFix but didn't finish.</p>
+       <p>${stepDesc}</p>
+       <p style="margin:20px 0;">
+         <a href="${ctaUrl}" style="background:#2ee6c5;color:#08101f;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block;">${ctaLabel}</a>
+       </p>
+       <p style="font-size:12px;color:rgba(230,237,246,0.55);">If you didn't create this workspace, you can ignore this email.</p>
+       <p>— TomaFix</p>`,
+    );
+  }
+
   sendSlackNotification(webhookUrl: string, text: string) {
     // Inline fetch for Slack
     return fetch(webhookUrl, {

@@ -159,6 +159,62 @@ export class SchedulerService {
     }
   }
 
+  // Every hour: send one-time reminder to incomplete workspaces (24h+ old, not yet active)
+  @Cron(CronExpression.EVERY_HOUR)
+  async sendOnboardingReminders() {
+    this.logger.log('[Onboarding Reminder Cron] Checking for incomplete workspaces...');
+
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000); // 24h ago
+
+    const incompleteWorkspaces = await this.prisma.workspace.findMany({
+      where: {
+        status: { in: ['PENDING_OTP', 'PAYMENT_PENDING'] },
+        createdAt: { lte: cutoff },
+        onboardingReminderSentAt: null,
+        ownerUserId: { not: null },
+      },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        templateType: true,
+        ownerUserId: true,
+      },
+    });
+
+    this.logger.log(`[Onboarding Reminder Cron] Found ${incompleteWorkspaces.length} incomplete workspace(s)`);
+
+    for (const ws of incompleteWorkspaces) {
+      try {
+        const owner = await this.prisma.user.findUnique({
+          where: { id: ws.ownerUserId! },
+          select: { email: true, fullName: true },
+        });
+        if (!owner?.email) continue;
+
+        const step = ws.status === 'PENDING_OTP' ? 'otp' : 'payment';
+
+        await this.mail.sendOnboardingReminder(
+          owner.email,
+          owner.fullName || 'there',
+          ws.name,
+          ws.templateType,
+          step,
+          ws.id,
+        );
+
+        await this.prisma.workspace.update({
+          where: { id: ws.id },
+          data: { onboardingReminderSentAt: new Date() },
+        });
+
+        this.logger.log(`[Onboarding Reminder Cron] Sent reminder to ${owner.email} for workspace ${ws.id}`);
+      } catch (e) {
+        this.logger.error(`[Onboarding Reminder Cron] Failed for workspace ${ws.id}: ${e.message}`);
+      }
+    }
+  }
+
   // Every hour: check for overdue alerts and notify via Slack
   @Cron(CronExpression.EVERY_HOUR)
   async checkOverdueAlerts() {

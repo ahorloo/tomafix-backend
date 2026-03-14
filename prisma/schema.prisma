@@ -178,6 +178,9 @@ model Workspace {
   owner           User?     @relation("WorkspaceOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
   template        Template? @relation(fields: [templateId], references: [id], onDelete: SetNull)
 
+  // Onboarding reminder (sent once after 24h if workspace not yet active)
+  onboardingReminderSentAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
