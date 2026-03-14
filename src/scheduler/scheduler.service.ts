@@ -168,7 +168,7 @@ export class SchedulerService {
 
     const incompleteWorkspaces = await this.prisma.workspace.findMany({
       where: {
-        status: { in: ['PENDING_OTP', 'PAYMENT_PENDING'] },
+        status: { in: ['PENDING_OTP', 'PENDING_PAYMENT'] },
         createdAt: { lte: cutoff },
         onboardingReminderSentAt: null,
         ownerUserId: { not: null },
