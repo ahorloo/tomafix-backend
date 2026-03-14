@@ -11,7 +11,7 @@ import { WorkspaceRoles } from './workspace-roles.decorator';
 export class WorkspaceMembersController {
   constructor(private readonly auth: AuthService) {}
 
-  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF)
   @Get()
   list(@Param('workspaceId') workspaceId: string) {
     return this.auth.listWorkspaceMembers(workspaceId);
