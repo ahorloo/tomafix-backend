@@ -17,6 +17,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { getEntitlements, resolvePlanName } from '../billing/planConfig';
+import { cacheGet, cacheSet } from '../billing/cache';
 import { MailService } from '../mail/mail.service';
 import { CreateAreaDto } from './dto/create-area.dto';
 import { CreateOfficeRequestDto } from './dto/create-request.dto';
@@ -242,6 +243,10 @@ export class OfficeService {
   // ─── Dashboard ────────────────────────────────────────────────────────────
 
   async getDashboard(workspaceId: string) {
+    const cacheKey = `office:dashboard:${workspaceId}`;
+    const cached = cacheGet<any>(cacheKey);
+    if (cached) return cached;
+
     await this.assertOfficeWorkspace(workspaceId);
 
     const [requestBuckets, openWorkOrders, totalAreas, totalAssets, recentRequests, activeSlaRows, escalatedQueue] =
@@ -302,7 +307,7 @@ export class OfficeService {
     const onTrack = Math.max(open - overdue, 0);
     const slaCompliancePct = open > 0 ? Math.round((onTrack / open) * 100) : 100;
 
-    return {
+    const payload = {
       requests: { pending, inProgress, resolved, open, overdue, criticalOverdue, due24h, onTrack, slaCompliancePct },
       workOrders: { open: openWorkOrders },
       areas: { total: totalAreas },
@@ -310,6 +315,9 @@ export class OfficeService {
       recentRequests,
       escalatedQueue,
     };
+
+    cacheSet(cacheKey, payload, 15000);
+    return payload;
   }
 
   // ─── Areas ────────────────────────────────────────────────────────────────

@@ -13,6 +13,7 @@ import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { getEntitlements, resolvePlanName } from '../billing/planConfig';
+import { cacheGet, cacheSet } from '../billing/cache';
 import { CreateUnitDto } from './dto/create-unit.dto';
 import { CreateResidentDto } from './dto/create-resident.dto';
 import { CreateRequestDto } from './dto/create-request.dto';
@@ -147,6 +148,10 @@ export class ApartmentService {
   }
 
   async getDashboard(workspaceId: string, estateId?: string) {
+    const cacheKey = `apartment:dashboard:${workspaceId}:${estateId || 'all'}`;
+    const cached = cacheGet<any>(cacheKey);
+    if (cached) return cached;
+
     const ws = await this.assertPropertyWorkspace(workspaceId);
     const resolvedEstateId = await this.resolveEstateIdForWorkspace(workspaceId, estateId);
 
@@ -204,7 +209,7 @@ export class ApartmentService {
           },
         });
 
-    return {
+    const payload = {
       units: {
         total: totalUnits,
         occupied: occupiedUnits,
@@ -218,6 +223,9 @@ export class ApartmentService {
       },
       recentRequests,
     };
+
+    cacheSet(cacheKey, payload, 15000);
+    return payload;
   }
 
   async listEstates(workspaceId: string) {
