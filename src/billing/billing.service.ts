@@ -1073,54 +1073,52 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       return { ok: true, alreadyActivated: true, workspace: ws };
     }
 
-    // Hit Paystack directly to confirm the transaction
-    let txn: Awaited<ReturnType<PaystackService['verifyTransaction']>>;
-    try {
-      txn = await this.paystack.verifyTransaction(reference);
-    } catch (err: any) {
-      this.logger.error(`verifyAndActivate: Paystack verify error ref=${reference}: ${err?.message}`);
-      throw new BadGatewayException('Could not verify payment with Paystack');
+    // Hit Paystack directly to confirm the transaction (retry a few times for eventual consistency)
+    let txn: Awaited<ReturnType<PaystackService['verifyTransaction']>> | undefined;
+    let lastErr: any;
+    for (let i = 0; i < 3; i++) {
+      try {
+        txn = await this.paystack.verifyTransaction(reference);
+        if (txn?.status === 'success') break;
+      } catch (err: any) {
+        lastErr = err;
+      }
+      if (i < 2) await new Promise((r) => setTimeout(r, 1200 * (i + 1)));
     }
 
+    // Fallback: if webhook already saw a successful charge, trust that and finalize.
     if (!txn || txn.status !== 'success') {
-      return { ok: false, paystackStatus: txn?.status ?? 'unknown' };
+      const webhookSuccess = await this.prisma.webhookEvent.findFirst({
+        where: {
+          provider: BillingProvider.PAYSTACK,
+          eventType: 'charge.success',
+          reference,
+        },
+        orderBy: { receivedAt: 'desc' },
+      });
+
+      if (webhookSuccess) {
+        const raw: any = (webhookSuccess as any)?.payload?.event || {};
+        await this.finalizeSuccessfulPayment({
+          reference,
+          txnId: raw?.data?.id ? String(raw.data.id) : null,
+          paidAt: raw?.data?.paid_at ? new Date(raw.data.paid_at) : new Date(),
+          rawEvent: raw,
+        });
+      } else {
+        if (lastErr) {
+          this.logger.warn(`verifyAndActivate: Paystack verify retry exhausted ref=${reference}: ${lastErr?.message || lastErr}`);
+        }
+        return { ok: false, paystackStatus: txn?.status ?? 'unknown' };
+      }
+    } else {
+      await this.finalizeSuccessfulPayment({
+        reference,
+        txnId: txn?.reference || null,
+        paidAt: txn?.paid_at ? new Date(txn.paid_at) : new Date(),
+        rawEvent: { data: txn },
+      });
     }
-
-    const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-
-    await this.prisma.$transaction([
-      this.prisma.payment.update({
-        where: { reference },
-        data: {
-          status: PaymentStatus.PAID,
-          paidAt: txn.paid_at ? new Date(txn.paid_at) : new Date(),
-          updatedAt: new Date(),
-        },
-      }),
-      this.prisma.workspace.update({
-        where: { id: payment.workspaceId },
-        data: {
-          status: WorkspaceStatus.ACTIVE,
-          billingStatus: BillingStatus.ACTIVE,
-          nextRenewal: periodEnd,
-          updatedAt: new Date(),
-        },
-      }),
-      this.prisma.subscription.upsert({
-        where: { workspaceId: payment.workspaceId },
-        create: {
-          workspaceId: payment.workspaceId,
-          status: SubscriptionStatus.ACTIVE,
-          currentPeriodEnd: periodEnd,
-          planId: payment.planId ?? undefined,
-        },
-        update: {
-          status: SubscriptionStatus.ACTIVE,
-          currentPeriodEnd: periodEnd,
-          updatedAt: new Date(),
-        },
-      }),
-    ]);
 
     const ws = await this.prisma.workspace.findUnique({
       where: { id: payment.workspaceId },
