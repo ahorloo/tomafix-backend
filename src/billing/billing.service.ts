@@ -1106,10 +1106,13 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
           rawEvent: raw,
         });
       } else {
-        if (lastErr) {
-          this.logger.warn(`verifyAndActivate: Paystack verify retry exhausted ref=${reference}: ${lastErr?.message || lastErr}`);
-        }
-        return { ok: false, paystackStatus: txn?.status ?? 'unknown' };
+        const errMsg = lastErr?.message || String(lastErr || '');
+        this.logger.warn(`verifyAndActivate: Paystack verify retry exhausted ref=${reference}: ${errMsg}`);
+        return {
+          ok: false,
+          paystackStatus: txn?.status ?? 'unknown',
+          paystackError: errMsg || undefined,
+        };
       }
     } else {
       await this.finalizeSuccessfulPayment({
