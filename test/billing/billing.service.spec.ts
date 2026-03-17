@@ -115,4 +115,90 @@ describe('BillingService', () => {
       }),
     });
   });
+
+  it('verifies and finalizes a paid plan switch while the workspace is already active', async () => {
+    const tx = {
+      payment: {
+        update: jest.fn().mockResolvedValue({ id: 'pay-1' }),
+      },
+      plan: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'plan-2', name: 'Growth', interval: PlanInterval.MONTHLY }),
+      },
+      workspace: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'ws-1',
+          status: WorkspaceStatus.ACTIVE,
+          billingStatus: BillingStatus.ACTIVE,
+        }),
+        update: jest.fn().mockResolvedValue({ id: 'ws-1', status: WorkspaceStatus.ACTIVE }),
+      },
+      subscription: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'sub-1' }),
+        update: jest.fn().mockResolvedValue({ id: 'sub-1' }),
+      },
+    };
+
+    const prisma: any = {
+      payment: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'pay-1',
+          workspaceId: 'ws-1',
+          planId: 'plan-2',
+          status: PaymentStatus.PENDING,
+          amountPesewas: 19900,
+          currency: 'GHS',
+        }),
+      },
+      workspace: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'ws-1',
+          status: WorkspaceStatus.ACTIVE,
+          billingStatus: BillingStatus.ACTIVE,
+          name: 'Workspace One',
+          templateType: 'APARTMENT',
+        }),
+      },
+      $transaction: jest.fn().mockImplementation(async (cb: any) => cb(tx)),
+    };
+
+    const paystack: any = {
+      verifyTransaction: jest.fn().mockResolvedValue({
+        status: 'success',
+        reference: 'tf_switch',
+        amount: 19900,
+        currency: 'GHS',
+        paid_at: '2026-03-17T11:46:00.000Z',
+      }),
+    };
+
+    const service = new BillingService(prisma, paystack);
+    const result = await service.verifyAndActivatePayment('tf_switch');
+
+    expect(result).toEqual({
+      ok: true,
+      alreadyActivated: false,
+      workspace: {
+        id: 'ws-1',
+        status: WorkspaceStatus.ACTIVE,
+        billingStatus: BillingStatus.ACTIVE,
+        name: 'Workspace One',
+        templateType: 'APARTMENT',
+      },
+    });
+    expect(tx.workspace.update).toHaveBeenCalledWith({
+      where: { id: 'ws-1' },
+      data: expect.objectContaining({
+        status: WorkspaceStatus.ACTIVE,
+        billingStatus: BillingStatus.ACTIVE,
+        planName: 'Growth',
+      }),
+    });
+    expect(tx.subscription.update).toHaveBeenCalledWith({
+      where: { id: 'sub-1' },
+      data: expect.objectContaining({
+        status: 'ACTIVE',
+        planId: 'plan-2',
+      }),
+    });
+  });
 });

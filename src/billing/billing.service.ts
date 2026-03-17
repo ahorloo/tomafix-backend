@@ -460,7 +460,10 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
 
       const currentWs = await tx.workspace.findUnique({ where: { id: payment.workspaceId } });
       if (!currentWs) throw new NotFoundException('Workspace not found while finalizing payment');
-      this.assertBillingTransition(currentWs.billingStatus as BillingStatus, BillingStatus.ACTIVE);
+      // Renewals and plan switches can succeed while the workspace is already active.
+      if (currentWs.billingStatus !== BillingStatus.ACTIVE) {
+        this.assertBillingTransition(currentWs.billingStatus as BillingStatus, BillingStatus.ACTIVE);
+      }
 
       await tx.workspace.update({
         where: { id: payment.workspaceId },
