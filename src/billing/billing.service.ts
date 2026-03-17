@@ -280,7 +280,11 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       },
     });
 
-    const callbackUrl = process.env.PAYSTACK_CALLBACK_URL;
+    const frontendBase = process.env.FRONTEND_URL?.trim()?.replace(/\/$/, '');
+    const callbackUrl =
+      process.env.PAYSTACK_CALLBACK_URL?.trim() ||
+      (frontendBase ? `${frontendBase}/onboarding/payment-success` : undefined) ||
+      'https://www.tomafix.com/onboarding/payment-success';
 
     let data: Awaited<ReturnType<PaystackService['initializeTransaction']>>;
     try {
@@ -1099,6 +1103,14 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
 
       if (webhookSuccess) {
         const raw: any = (webhookSuccess as any)?.payload?.event || {};
+        const eventAmount = Number(raw?.data?.amount || 0);
+        const eventCurrency = String(raw?.data?.currency || '').toUpperCase();
+        const expectedCurrency = String(payment.currency || '').toUpperCase();
+        if (eventAmount !== Number(payment.amountPesewas) || (expectedCurrency && eventCurrency && eventCurrency !== expectedCurrency)) {
+          this.logger.warn(`verifyAndActivate: webhook amount/currency mismatch ref=${reference} expected=${payment.amountPesewas}/${expectedCurrency} got=${eventAmount}/${eventCurrency}`);
+          return { ok: false, paystackStatus: 'mismatch', paystackError: 'Payment mismatch detected. Contact support.' };
+        }
+
         await this.finalizeSuccessfulPayment({
           reference,
           txnId: raw?.data?.id ? String(raw.data.id) : null,
@@ -1115,6 +1127,15 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
         };
       }
     } else {
+      const txnAmount = Number(txn?.amount || 0);
+      const txnCurrency = String(txn?.currency || '').toUpperCase();
+      const expectedCurrency = String(payment.currency || '').toUpperCase();
+
+      if (txnAmount !== Number(payment.amountPesewas) || (expectedCurrency && txnCurrency && txnCurrency !== expectedCurrency)) {
+        this.logger.warn(`verifyAndActivate: verify amount/currency mismatch ref=${reference} expected=${payment.amountPesewas}/${expectedCurrency} got=${txnAmount}/${txnCurrency}`);
+        return { ok: false, paystackStatus: 'mismatch', paystackError: 'Payment mismatch detected. Contact support.' };
+      }
+
       await this.finalizeSuccessfulPayment({
         reference,
         txnId: txn?.reference || null,
