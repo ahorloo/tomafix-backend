@@ -4,7 +4,7 @@ import * as crypto from 'crypto';
 
 // Simple password hashing using Node's built-in crypto (no bcrypt dep needed)
 function hashPassword(password: string): string {
-  return crypto.createHash('sha256').update(password + process.env.ADMIN_SECRET || 'tf-admin-salt').digest('hex');
+  return crypto.createHash('sha256').update(password + (process.env.ADMIN_SECRET || 'tf-admin-salt')).digest('hex');
 }
 
 function generateToken(): string {
