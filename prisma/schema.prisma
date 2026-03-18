@@ -870,3 +870,36 @@ model OfficeCommunityMessage {
   @@index([channelId])
   @@index([workspaceId, channelId, createdAt])
 }
+
+// ── Technician Marketplace ─────────────────────────────────────────────────────
+
+enum TechnicianApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model TechnicianApplication {
+  id             String                        @id @default(cuid())
+  businessName   String
+  contactPerson  String
+  phone          String
+  whatsapp       String
+  email          String
+  businessAddress String
+  serviceAreas   String
+  categories     String[]
+  yearsInOperation String?
+  teamSize       String?
+  bio            String?
+  website        String?
+  latitude       Float
+  longitude      Float
+  status         TechnicianApplicationStatus   @default(PENDING)
+  reviewNote     String?
+  createdAt      DateTime                      @default(now())
+  updatedAt      DateTime                      @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+}
