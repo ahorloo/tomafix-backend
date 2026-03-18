@@ -1,5 +1,6 @@
 import { Body, Controller, Post, HttpCode, HttpStatus } from '@nestjs/common';
-import { MarketplaceService, CreateTechnicianApplicationDto } from './marketplace.service';
+import { MarketplaceService } from './marketplace.service';
+import type { CreateTechnicianApplicationDto } from './marketplace.service';
 
 @Controller('marketplace')
 export class MarketplaceController {
