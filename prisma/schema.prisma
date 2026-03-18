@@ -903,3 +903,61 @@ model TechnicianApplication {
   @@index([status])
   @@index([createdAt])
 }
+
+// ── Admin Panel ────────────────────────────────────────────────────────────────
+
+enum AdminRole {
+  SUPER_ADMIN
+  OPS_ADMIN
+  BILLING_ADMIN
+  REVIEW_ADMIN
+  CONTENT_ADMIN
+}
+
+model AdminUser {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  fullName     String
+  role         AdminRole @default(OPS_ADMIN)
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  sessions  AdminSession[]
+  auditLogs AdminAuditLog[]
+
+  @@index([email])
+  @@index([role])
+}
+
+model AdminSession {
+  id          String   @id @default(cuid())
+  adminUserId String
+  token       String   @unique
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  admin AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([adminUserId])
+}
+
+model AdminAuditLog {
+  id          String   @id @default(cuid())
+  adminUserId String
+  adminEmail  String
+  action      String
+  targetType  String
+  targetId    String?
+  meta        Json?
+  createdAt   DateTime @default(now())
+
+  admin AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+
+  @@index([adminUserId])
+  @@index([action])
+  @@index([createdAt])
+}

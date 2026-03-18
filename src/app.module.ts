@@ -14,6 +14,7 @@ import { MailModule } from './mail/mail.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { HealthModule } from './health/health.module';
 import { MarketplaceModule } from './marketplace/marketplace.module';
+import { AdminModule } from './admin/admin.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -34,6 +35,7 @@ import { AppService } from './app.service';
     SchedulerModule,
     HealthModule,
     MarketplaceModule,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [AppService],
