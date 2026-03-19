@@ -6,3 +6,6 @@ ALTER TABLE "Workspace" ADD COLUMN IF NOT EXISTS "adminNotes" TEXT;
 
 -- Add adminNotes to TechnicianApplication
 ALTER TABLE "TechnicianApplication" ADD COLUMN IF NOT EXISTS "adminNotes" TEXT;
+
+-- Add serviceAreaLocations to TechnicianApplication
+ALTER TABLE "TechnicianApplication" ADD COLUMN IF NOT EXISTS "serviceAreaLocations" JSONB;
