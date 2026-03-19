@@ -4,13 +4,46 @@ import helmet from 'helmet';
 import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 
+function isLocalDevOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    const { protocol, hostname } = url;
+    if (!['http:', 'https:'].includes(protocol)) return false;
+    if (hostname === 'localhost' || hostname === '127.0.0.1') return true;
+    if (hostname.startsWith('192.168.')) return true;
+    if (hostname.startsWith('10.')) return true;
+
+    const match = hostname.match(/^172\.(\d{1,3})\./);
+    if (!match) return false;
+
+    const secondOctet = Number(match[1]);
+    return secondOctet >= 16 && secondOctet <= 31;
+  } catch {
+    return false;
+  }
+}
+
 function parseCorsOrigins(): string[] {
   const raw = process.env.CORS_ORIGINS;
-  if (!raw) return [];
-  return raw
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const configured = raw
+    ? raw
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : [];
+
+  const expanded = new Set<string>(configured);
+
+  for (const origin of configured) {
+    if (origin.includes('localhost')) {
+      expanded.add(origin.replace('localhost', '127.0.0.1'));
+    }
+    if (origin.includes('127.0.0.1')) {
+      expanded.add(origin.replace('127.0.0.1', 'localhost'));
+    }
+  }
+
+  return Array.from(expanded);
 }
 
 async function bootstrap() {
@@ -24,13 +57,28 @@ async function bootstrap() {
   app.getHttpAdapter().getInstance().set('trust proxy', 1);
 
   const corsOrigins = parseCorsOrigins();
+  const isDev = process.env.NODE_ENV !== 'production';
 
   // ✅ CORS for Vite dev server + production frontend domains
   app.enableCors({
-    origin:
-      corsOrigins.length > 0
-        ? corsOrigins
-        : ['http://localhost:5173', 'http://localhost:5174'],
+    origin(origin, callback) {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+
+      if (corsOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      if (isDev && isLocalDevOrigin(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error(`Origin not allowed by CORS: ${origin}`), false);
+    },
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],

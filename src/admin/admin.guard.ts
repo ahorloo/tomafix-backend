@@ -35,7 +35,7 @@ export class AdminGuard implements CanActivate {
 
     // Check role restriction if decorator used
     const requiredRoles: string[] = this.reflector.get(ADMIN_ROLES_KEY, context.getHandler()) || [];
-    if (requiredRoles.length && !requiredRoles.includes(session.admin.role)) {
+    if (requiredRoles.length && session.admin.role !== 'SUPER_ADMIN' && !requiredRoles.includes(session.admin.role)) {
       throw new ForbiddenException(`Requires one of: ${requiredRoles.join(', ')}`);
     }
 
