@@ -9,6 +9,7 @@ export interface CreateTechnicianApplicationDto {
   email: string;
   businessAddress: string;
   serviceAreas: string;
+  serviceAreaLocations?: Array<{ name: string; latitude: number; longitude: number }>;
   categories: string[];
   yearsInOperation?: string;
   teamSize?: string;
@@ -68,6 +69,9 @@ export class MarketplaceService {
     if (!dto.email?.trim()) throw new BadRequestException('Email is required');
     if (!dto.categories?.length) throw new BadRequestException('At least one category is required');
     if (dto.latitude == null || dto.longitude == null) throw new BadRequestException('Location is required');
+    if (!dto.serviceAreaLocations?.length) {
+      throw new BadRequestException('Please verify at least one service area location');
+    }
 
     return this.prisma.technicianApplication.create({
       data: {
@@ -78,6 +82,7 @@ export class MarketplaceService {
         email: dto.email.trim().toLowerCase(),
         businessAddress: dto.businessAddress.trim(),
         serviceAreas: dto.serviceAreas.trim(),
+        serviceAreaLocations: dto.serviceAreaLocations as any,
         categories: dto.categories,
         yearsInOperation: dto.yearsInOperation?.trim() || null,
         teamSize: dto.teamSize?.trim() || null,

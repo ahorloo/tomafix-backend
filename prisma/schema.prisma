@@ -890,6 +890,7 @@ model TechnicianApplication {
   email          String
   businessAddress String
   serviceAreas   String
+  serviceAreaLocations Json?
   categories     String[]
   yearsInOperation String?
   teamSize       String?
