@@ -636,6 +636,7 @@ export class AdminService {
     });
 
     await this.audit(adminId, adminEmail, 'technician.approve', 'TechnicianApplication', id, { businessName: app.businessName });
+    await this.sendTechnicianStatusEmail(app.email, app.businessName, app.contactPerson, 'approved', note);
     return updated;
   }
 
@@ -649,16 +650,114 @@ export class AdminService {
     });
 
     await this.audit(adminId, adminEmail, 'technician.reject', 'TechnicianApplication', id, { businessName: app.businessName });
+    await this.sendTechnicianStatusEmail(app.email, app.businessName, app.contactPerson, 'rejected', note);
     return updated;
   }
 
   async suspendTechApplication(id: string, adminId: string, adminEmail: string) {
+    const app = await this.prisma.technicianApplication.findUnique({ where: { id } });
+    if (!app) throw new NotFoundException('Application not found');
+
     const updated = await this.prisma.technicianApplication.update({
       where: { id },
       data: { status: 'REJECTED', reviewNote: 'Suspended by admin' },
     });
     await this.audit(adminId, adminEmail, 'technician.suspend', 'TechnicianApplication', id);
+    await this.sendTechnicianStatusEmail(app.email, app.businessName, app.contactPerson, 'suspended');
     return updated;
+  }
+
+  private async sendTechnicianStatusEmail(
+    to: string,
+    businessName: string,
+    contactPerson: string,
+    action: 'approved' | 'rejected' | 'suspended',
+    note?: string | null,
+  ): Promise<void> {
+    const apiKey = process.env.RESEND_API_KEY;
+    const from = process.env.RESEND_FROM || process.env.EMAIL_FROM || 'TomaFix <onboarding@resend.dev>';
+    const logoUrl = process.env.EMAIL_LOGO_URL || 'https://www.tomafix.com/bimi-logo-preview.jpg';
+    const appUrl = process.env.APP_URL || 'https://www.tomafix.com';
+
+    const config = {
+      approved: {
+        subject: `🎉 Your business listing is approved — ${businessName}`,
+        headline: 'Your business is now live on TomaFix',
+        color: '#E8943A',
+        badge: 'APPROVED',
+        badgeBg: 'rgba(232,148,58,0.15)',
+        body: `
+          <p style="margin:0 0 14px;">Hi <strong>${contactPerson}</strong>,</p>
+          <p style="margin:0 0 14px;">Great news — <strong>${businessName}</strong> has been reviewed and approved by the TomaFix team. Your business is now live in the public technician directory.</p>
+          <p style="margin:0 0 14px;">Property owners, apartment managers, and facility teams can now search and contact you directly by service type and location.</p>
+          ${note ? `<div style="margin:16px 0;padding:14px 16px;border-radius:12px;background:rgba(232,148,58,0.10);border:1px solid rgba(232,148,58,0.25);color:#E8943A;font-size:13px;"><strong>Note from reviewer:</strong> ${note}</div>` : ''}
+          <p style="margin:0 0 20px;">You can view your live listing on the directory below.</p>
+          <a href="${appUrl}/find-technician" style="display:inline-block;padding:13px 24px;border-radius:12px;background:linear-gradient(120deg,#E8943A,#F5B668);color:#080E1C;font-weight:800;font-size:14px;text-decoration:none;">View the directory</a>
+        `,
+      },
+      rejected: {
+        subject: `TomaFix application update — ${businessName}`,
+        headline: 'Your listing application was not approved',
+        color: '#E07070',
+        badge: 'NOT APPROVED',
+        badgeBg: 'rgba(224,112,112,0.12)',
+        body: `
+          <p style="margin:0 0 14px;">Hi <strong>${contactPerson}</strong>,</p>
+          <p style="margin:0 0 14px;">After reviewing your application for <strong>${businessName}</strong>, we were unable to approve your listing at this time.</p>
+          ${note ? `<div style="margin:16px 0;padding:14px 16px;border-radius:12px;background:rgba(224,112,112,0.10);border:1px solid rgba(224,112,112,0.25);color:#E07070;font-size:13px;"><strong>Reason:</strong> ${note}</div>` : '<p style="margin:0 0 14px;color:#8899aa;font-size:13px;">Our team will reach out if we need additional information.</p>'}
+          <p style="margin:0 0 14px;">You are welcome to reapply with updated or more complete business details. Make sure your operating address, contact information, and service coverage are accurate and verifiable.</p>
+          <a href="${appUrl}/join-technician" style="display:inline-block;padding:13px 24px;border-radius:12px;background:rgba(255,255,255,0.08);color:#e6edf6;font-weight:700;font-size:14px;text-decoration:none;border:1px solid rgba(255,255,255,0.14);">Reapply now</a>
+        `,
+      },
+      suspended: {
+        subject: `Important: Your TomaFix listing has been suspended — ${businessName}`,
+        headline: 'Your listing has been suspended',
+        color: '#E07070',
+        badge: 'SUSPENDED',
+        badgeBg: 'rgba(224,112,112,0.12)',
+        body: `
+          <p style="margin:0 0 14px;">Hi <strong>${contactPerson}</strong>,</p>
+          <p style="margin:0 0 14px;">Your listing for <strong>${businessName}</strong> has been suspended by the TomaFix team and is no longer visible in the public directory.</p>
+          <p style="margin:0 0 14px;">This may be due to a trust concern, outdated contact details, or a policy issue. If you believe this was done in error or would like to discuss reinstatement, please reach out to us directly.</p>
+          <a href="mailto:support@tomafix.com" style="display:inline-block;padding:13px 24px;border-radius:12px;background:rgba(255,255,255,0.08);color:#e6edf6;font-weight:700;font-size:14px;text-decoration:none;border:1px solid rgba(255,255,255,0.14);">Contact support</a>
+        `,
+      },
+    }[action];
+
+    const html = `
+      <div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial,sans-serif;background:#080E1C;padding:24px 14px;">
+        <div style="max-width:600px;margin:0 auto;background:#0F1829;border:1px solid rgba(255,255,255,0.08);border-radius:16px;overflow:hidden;color:#e6edf6;">
+          <div style="padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.07);background:rgba(232,148,58,0.05);">
+            <img src="${logoUrl}" alt="TomaFix" style="max-width:150px;height:auto;display:block;" />
+          </div>
+          <div style="padding:24px 22px;">
+            <div style="display:inline-block;padding:5px 12px;border-radius:999px;background:${config.badgeBg};color:${config.color};font-size:11px;font-weight:800;letter-spacing:0.12em;margin-bottom:14px;">${config.badge}</div>
+            <h2 style="margin:0 0 18px;font-size:22px;font-weight:900;color:#f1f5f9;line-height:1.2;">${config.headline}</h2>
+            <div style="font-size:14px;line-height:1.7;color:#c4d0da;">
+              ${config.body}
+            </div>
+          </div>
+          <div style="padding:14px 22px;border-top:1px solid rgba(255,255,255,0.06);font-size:11px;color:rgba(230,237,246,0.40);">
+            TomaFix · Technician Marketplace · <a href="${appUrl}" style="color:rgba(232,148,58,0.7);text-decoration:none;">tomafix.com</a>
+          </div>
+        </div>
+      </div>
+    `;
+
+    if (!apiKey) {
+      console.warn(`[TECHNICIAN EMAIL] ${action.toUpperCase()} → ${to}`);
+      return;
+    }
+
+    try {
+      await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from, to: [to], subject: config.subject, html }),
+      });
+    } catch (err) {
+      console.error(`[TECHNICIAN EMAIL] Failed to send ${action} email to ${to}:`, err);
+    }
   }
 
   // ── Admin Users (SUPER_ADMIN only) ────────────────────────────────────────
