@@ -628,7 +628,7 @@ export class AdminService {
   async approveTechApplication(id: string, adminId: string, adminEmail: string, note?: string) {
     const app = await this.prisma.technicianApplication.findUnique({ where: { id } });
     if (!app) throw new NotFoundException('Application not found');
-    if (app.status === 'APPROVED') throw new BadRequestException('Already approved');
+    // Allow re-approving a rejected application (mistake recovery)
 
     const updated = await this.prisma.technicianApplication.update({
       where: { id },
