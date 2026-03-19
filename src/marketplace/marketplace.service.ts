@@ -72,11 +72,12 @@ export class MarketplaceService {
     if (!dto.categories?.length) throw new BadRequestException('At least one category is required');
     if (dto.latitude == null || dto.longitude == null) throw new BadRequestException('Location is required');
     if (!dto.businessLocationUrl?.trim()) throw new BadRequestException('Google Maps business location URL is required');
-    if (!/^https?:\/\/(www\.)?google\./i.test(dto.businessLocationUrl.trim())) {
+    const isMapsUrl = (url: string) => /^https?:\/\/.+/i.test(url) && /(google\.|maps\.app\.goo\.gl|goo\.gl)/i.test(url);
+    if (!isMapsUrl(dto.businessLocationUrl.trim())) {
       throw new BadRequestException('Business location must be a valid Google Maps URL');
     }
     if (!dto.serviceAreaLinks?.length) throw new BadRequestException('At least one Google Maps service area URL is required');
-    const invalidServiceLink = dto.serviceAreaLinks.find((u) => !/^https?:\/\/(www\.)?google\./i.test(String(u).trim()));
+    const invalidServiceLink = dto.serviceAreaLinks.find((u) => !isMapsUrl(String(u).trim()));
     if (invalidServiceLink) {
       throw new BadRequestException('All service area links must be valid Google Maps URLs');
     }
