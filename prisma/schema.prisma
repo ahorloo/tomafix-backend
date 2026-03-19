@@ -181,6 +181,8 @@ model Workspace {
   // Onboarding reminder (sent once after 24h if workspace not yet active)
   onboardingReminderSentAt DateTime?
 
+  adminNotes String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -893,10 +895,12 @@ model TechnicianApplication {
   teamSize       String?
   bio            String?
   website        String?
+  logoUrl        String?
   latitude       Float
   longitude      Float
   status         TechnicianApplicationStatus   @default(PENDING)
   reviewNote     String?
+  adminNotes     String?
   createdAt      DateTime                      @default(now())
   updatedAt      DateTime                      @updatedAt
 

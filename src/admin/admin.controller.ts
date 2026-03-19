@@ -33,14 +33,37 @@ export class AdminController {
 
   @Get('dashboard')
   @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'OPS_ADMIN', 'BILLING_ADMIN', 'REVIEW_ADMIN', 'CONTENT_ADMIN')
   getDashboard() {
     return this.adminService.getDashboard();
+  }
+
+  @Get('analytics')
+  @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'OPS_ADMIN', 'BILLING_ADMIN', 'REVIEW_ADMIN')
+  getAnalytics() {
+    return this.adminService.getAnalyticsOverview();
+  }
+
+  @Get('risk-center')
+  @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'OPS_ADMIN', 'REVIEW_ADMIN', 'BILLING_ADMIN')
+  getRiskCenter() {
+    return this.adminService.getRiskCenter();
+  }
+
+  @Get('system-health')
+  @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'OPS_ADMIN')
+  getSystemHealth() {
+    return this.adminService.getSystemHealth();
   }
 
   // ── Workspaces ────────────────────────────────────────────────────────────
 
   @Get('workspaces')
   @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'OPS_ADMIN', 'BILLING_ADMIN')
   listWorkspaces(
     @Query('page') page?: string,
     @Query('status') status?: string,
@@ -52,6 +75,7 @@ export class AdminController {
 
   @Get('workspaces/:id')
   @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'OPS_ADMIN', 'BILLING_ADMIN')
   getWorkspace(@Param('id') id: string) {
     return this.adminService.getWorkspace(id);
   }
@@ -77,10 +101,18 @@ export class AdminController {
     return this.adminService.fixWorkspacePayment(id, req.adminUser.id, req.adminUser.email);
   }
 
+  @Patch('workspaces/:id/notes')
+  @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'OPS_ADMIN', 'BILLING_ADMIN')
+  updateWorkspaceNotes(@Param('id') id: string, @Body() body: { notes: string }, @Req() req: any) {
+    return this.adminService.updateWorkspaceNotes(id, req.adminUser.id, req.adminUser.email, body.notes ?? '');
+  }
+
   // ── Users ─────────────────────────────────────────────────────────────────
 
   @Get('users')
   @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'OPS_ADMIN')
   listUsers(@Query('page') page?: string, @Query('search') search?: string) {
     return this.adminService.listUsers(Number(page) || 1, 30, search);
   }
@@ -89,12 +121,14 @@ export class AdminController {
 
   @Get('technician-applications')
   @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'OPS_ADMIN', 'REVIEW_ADMIN')
   listTechApplications(@Query('page') page?: string, @Query('status') status?: string) {
     return this.adminService.listTechApplications(Number(page) || 1, 30, status);
   }
 
   @Get('technician-applications/:id')
   @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'OPS_ADMIN', 'REVIEW_ADMIN')
   getTechApplication(@Param('id') id: string) {
     return this.adminService.getTechApplication(id);
   }
@@ -124,7 +158,7 @@ export class AdminController {
 
   @Get('audit-logs')
   @UseGuards(AdminGuard)
-  @AdminRoles('SUPER_ADMIN', 'OPS_ADMIN')
+  @AdminRoles('SUPER_ADMIN')
   listAuditLogs(@Query('page') page?: string) {
     return this.adminService.listAuditLogs(Number(page) || 1);
   }
@@ -143,5 +177,16 @@ export class AdminController {
   @AdminRoles('SUPER_ADMIN')
   createAdmin(@Body() body: { email: string; fullName: string; password: string; role: string }) {
     return this.adminService.createAdminUser(body.email, body.fullName, body.password, body.role);
+  }
+
+  @Patch('admins/:id')
+  @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN')
+  updateAdmin(
+    @Param('id') id: string,
+    @Body() body: { role?: string; isActive?: boolean },
+    @Req() req: any,
+  ) {
+    return this.adminService.updateAdminUser(id, req.adminUser.id, req.adminUser.email, body);
   }
 }
