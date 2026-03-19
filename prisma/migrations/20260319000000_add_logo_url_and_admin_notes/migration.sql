@@ -9,3 +9,7 @@ ALTER TABLE "TechnicianApplication" ADD COLUMN IF NOT EXISTS "adminNotes" TEXT;
 
 -- Add serviceAreaLocations to TechnicianApplication
 ALTER TABLE "TechnicianApplication" ADD COLUMN IF NOT EXISTS "serviceAreaLocations" JSONB;
+
+-- Add businessLocationUrl and serviceAreaLinks to TechnicianApplication
+ALTER TABLE "TechnicianApplication" ADD COLUMN IF NOT EXISTS "businessLocationUrl" TEXT;
+ALTER TABLE "TechnicianApplication" ADD COLUMN IF NOT EXISTS "serviceAreaLinks" TEXT[] DEFAULT ARRAY[]::TEXT[];
