@@ -734,6 +734,17 @@ export class ApartmentService {
       await this.prisma.apartmentResident.delete({ where: { id: residentId } });
     }
     if (resident.unitId) await this.syncUnitOccupancy(workspaceId, resident.unitId);
+
+    // Revoke workspace membership so the user cannot access this workspace at all.
+    if (resident.email) {
+      const user = await this.prisma.user.findFirst({
+        where: { email: { equals: resident.email.trim(), mode: 'insensitive' } },
+      });
+      if (user) {
+        await this.prisma.workspaceMember.deleteMany({ where: { workspaceId, userId: user.id } });
+      }
+    }
+
     return { ok: true, mode: 'force_deleted' };
   }
 
