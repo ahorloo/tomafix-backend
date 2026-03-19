@@ -27,6 +27,10 @@ export class AdminGuard implements CanActivate {
       throw new UnauthorizedException('Admin session expired or invalid');
     }
 
+    if (!session.twoFactorVerified) {
+      throw new UnauthorizedException('Two-factor verification required');
+    }
+
     if (!session.admin.isActive) {
       throw new ForbiddenException('Admin account is inactive');
     }

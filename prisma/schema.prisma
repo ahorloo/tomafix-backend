@@ -944,6 +944,10 @@ model AdminSession {
   expiresAt   DateTime
   createdAt   DateTime @default(now())
 
+  twoFactorVerified Boolean   @default(false)
+  otpHash           String?
+  otpExpiresAt      DateTime?
+
   admin AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
 
   @@index([token])

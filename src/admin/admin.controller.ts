@@ -15,6 +15,12 @@ export class AdminController {
     return this.adminService.login(body.email, body.password);
   }
 
+  @Post('auth/otp/verify')
+  @HttpCode(HttpStatus.OK)
+  verifyOtp(@Body() body: { token: string; code: string }) {
+    return this.adminService.verifyAdminOtp(body.token, body.code);
+  }
+
   @Post('auth/logout')
   @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.OK)

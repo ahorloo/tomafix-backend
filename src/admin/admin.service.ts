@@ -63,21 +63,53 @@ export class AdminService {
     const hash = hashPassword(password);
     if (hash !== admin.passwordHash) throw new UnauthorizedException('Invalid credentials');
 
+    // Generate 6-digit OTP
+    const code = String(crypto.randomInt(100000, 999999));
+    const otpHash = this.hashAdminOtp(code);
+    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 min
+
+    // Create PENDING session (twoFactorVerified: false)
     const token = generateToken();
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 12); // 12h
 
     await this.prisma.adminSession.create({
-      data: { adminUserId: admin.id, token, expiresAt },
+      data: { adminUserId: admin.id, token, expiresAt, twoFactorVerified: false, otpHash, otpExpiresAt },
+    });
+
+    // Send OTP email
+    await this.sendAdminOtpEmail(admin.email, admin.fullName, code);
+
+    return { step: 'otp', token };
+  }
+
+  async verifyAdminOtp(token: string, code: string) {
+    const session = await this.prisma.adminSession.findUnique({
+      where: { token },
+      include: { admin: true },
+    });
+
+    if (!session || session.twoFactorVerified) throw new UnauthorizedException('Invalid or expired session');
+    if (!session.otpHash || !session.otpExpiresAt) throw new UnauthorizedException('No OTP pending');
+    if (session.otpExpiresAt < new Date()) throw new UnauthorizedException('OTP has expired. Please sign in again.');
+    if (!session.admin.isActive) throw new UnauthorizedException('Admin account is inactive');
+
+    const valid = this.verifyAdminOtpHash(code.trim(), session.otpHash);
+    if (!valid) throw new UnauthorizedException('Incorrect verification code');
+
+    // Mark session as fully verified
+    await this.prisma.adminSession.update({
+      where: { token },
+      data: { twoFactorVerified: true, otpHash: null, otpExpiresAt: null },
     });
 
     await this.prisma.adminUser.update({
-      where: { id: admin.id },
+      where: { id: session.admin.id },
       data: { lastLoginAt: new Date() },
     });
 
     return {
       token,
-      admin: { id: admin.id, email: admin.email, fullName: admin.fullName, role: admin.role },
+      admin: { id: session.admin.id, email: session.admin.email, fullName: session.admin.fullName, role: session.admin.role },
     };
   }
 
@@ -691,5 +723,67 @@ export class AdminService {
       select: { id: true, email: true, fullName: true, role: true, isActive: true, lastLoginAt: true, createdAt: true },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  private hashAdminOtp(code: string): string {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.scryptSync(code, salt, 32).toString('hex');
+    return `${salt}:${hash}`;
+  }
+
+  private verifyAdminOtpHash(code: string, stored: string): boolean {
+    const [salt, hash] = (stored ?? '').split(':');
+    if (!salt || !hash) return false;
+    try {
+      const derived = crypto.scryptSync(code, salt, 32);
+      const expected = Buffer.from(hash, 'hex');
+      if (expected.length !== derived.length) return false;
+      return crypto.timingSafeEqual(expected, derived);
+    } catch {
+      return false;
+    }
+  }
+
+  private async sendAdminOtpEmail(email: string, fullName: string, code: string): Promise<void> {
+    const apiKey = process.env.RESEND_API_KEY;
+    const from = process.env.RESEND_FROM || process.env.EMAIL_FROM || 'TomaFix <onboarding@resend.dev>';
+    const logoUrl = process.env.EMAIL_LOGO_URL || 'https://www.tomafix.com/bimi-logo-preview.jpg';
+
+    const bodyHtml = `
+      <h2 style="margin:0 0 12px;font-size:20px;">Admin verification code</h2>
+      <p style="margin:0 0 16px;color:#c4d0da;">Hi ${fullName}, use this code to complete your sign-in to the TomaFix admin panel:</p>
+      <div style="font-size:32px;font-weight:900;letter-spacing:10px;padding:14px 20px;border-radius:12px;background:rgba(232,148,58,0.12);border:1px solid rgba(232,148,58,0.28);color:#E8943A;display:inline-block;margin-bottom:16px;">${code}</div>
+      <p style="margin:0;color:#8899aa;font-size:13px;">This code expires in <strong>10 minutes</strong>. Do not share it with anyone.</p>
+    `;
+
+    const html = `
+      <div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial,sans-serif;background:#080E1C;padding:24px 14px;">
+        <div style="max-width:580px;margin:0 auto;background:#0F1829;border:1px solid rgba(232,148,58,0.18);border-radius:16px;overflow:hidden;color:#e6edf6;">
+          <div style="padding:16px 20px;border-bottom:1px solid rgba(232,148,58,0.12);background:rgba(232,148,58,0.06);">
+            <img src="${logoUrl}" alt="TomaFix" style="max-width:150px;height:auto;display:block;" />
+          </div>
+          <div style="padding:24px 20px;line-height:1.6;font-size:14px;">${bodyHtml}</div>
+          <div style="padding:12px 20px;border-top:1px solid rgba(255,255,255,0.06);font-size:11px;color:rgba(230,237,246,0.45);">
+            TomaFix Admin Panel · Restricted access
+          </div>
+        </div>
+      </div>
+    `;
+
+    if (!apiKey) {
+      console.warn(`[ADMIN 2FA OTP] ${email} → ${code}`);
+      return;
+    }
+
+    try {
+      await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from, to: [email], subject: 'Your TomaFix admin verification code', html }),
+      });
+    } catch (err) {
+      console.error('[ADMIN 2FA] Email send failed:', err);
+      // Don't throw – OTP is in DB, admin can retry
+    }
   }
 }
