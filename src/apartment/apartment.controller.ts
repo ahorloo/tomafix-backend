@@ -136,6 +136,12 @@ export class ApartmentController {
     return this.apartment.deleteResident(workspaceId, residentId);
   }
 
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN)
+  @Delete('residents/:residentId/force')
+  forceDeleteResident(@Param('workspaceId') workspaceId: string, @Param('residentId') residentId: string) {
+    return this.apartment.forceDeleteResident(workspaceId, residentId);
+  }
+
   // Requests
   @WorkspacePermission('requests:view')
   @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF, MemberRole.TECHNICIAN)

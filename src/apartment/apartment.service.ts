@@ -717,6 +717,26 @@ export class ApartmentService {
     return { ok: true, mode: 'deleted' };
   }
 
+  async forceDeleteResident(workspaceId: string, residentId: string) {
+    const ws = await this.assertPropertyWorkspace(workspaceId);
+
+    const resident = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateResident.findFirst({ where: { id: residentId, workspaceId } })
+      : await this.prisma.apartmentResident.findFirst({ where: { id: residentId, workspaceId } });
+    if (!resident) throw new NotFoundException('Resident not found');
+
+    // Delete all requests first, then the resident — leaves no trace.
+    if (ws.templateType === TemplateType.ESTATE) {
+      await this.prisma.estateRequest.deleteMany({ where: { workspaceId, residentId } });
+      await this.prisma.estateResident.delete({ where: { id: residentId } });
+    } else {
+      await this.prisma.apartmentRequest.deleteMany({ where: { workspaceId, residentId } });
+      await this.prisma.apartmentResident.delete({ where: { id: residentId } });
+    }
+    if (resident.unitId) await this.syncUnitOccupancy(workspaceId, resident.unitId);
+    return { ok: true, mode: 'force_deleted' };
+  }
+
   async listRequests(workspaceId: string, status?: string, actorUserId?: string, estateId?: string) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
 
