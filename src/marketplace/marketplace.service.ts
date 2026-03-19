@@ -8,7 +8,9 @@ export interface CreateTechnicianApplicationDto {
   whatsapp: string;
   email: string;
   businessAddress: string;
+  businessLocationUrl?: string;
   serviceAreas: string;
+  serviceAreaLinks?: string[];
   serviceAreaLocations?: Array<{ name: string; latitude: number; longitude: number }>;
   categories: string[];
   yearsInOperation?: string;
@@ -69,6 +71,15 @@ export class MarketplaceService {
     if (!dto.email?.trim()) throw new BadRequestException('Email is required');
     if (!dto.categories?.length) throw new BadRequestException('At least one category is required');
     if (dto.latitude == null || dto.longitude == null) throw new BadRequestException('Location is required');
+    if (!dto.businessLocationUrl?.trim()) throw new BadRequestException('Google Maps business location URL is required');
+    if (!/^https?:\/\/(www\.)?google\./i.test(dto.businessLocationUrl.trim())) {
+      throw new BadRequestException('Business location must be a valid Google Maps URL');
+    }
+    if (!dto.serviceAreaLinks?.length) throw new BadRequestException('At least one Google Maps service area URL is required');
+    const invalidServiceLink = dto.serviceAreaLinks.find((u) => !/^https?:\/\/(www\.)?google\./i.test(String(u).trim()));
+    if (invalidServiceLink) {
+      throw new BadRequestException('All service area links must be valid Google Maps URLs');
+    }
     if (!dto.serviceAreaLocations?.length) {
       throw new BadRequestException('Please verify at least one service area location');
     }
@@ -81,7 +92,9 @@ export class MarketplaceService {
         whatsapp: dto.whatsapp.trim(),
         email: dto.email.trim().toLowerCase(),
         businessAddress: dto.businessAddress.trim(),
+        businessLocationUrl: dto.businessLocationUrl?.trim() || null,
         serviceAreas: dto.serviceAreas.trim(),
+        serviceAreaLinks: dto.serviceAreaLinks || [],
         serviceAreaLocations: dto.serviceAreaLocations as any,
         categories: dto.categories,
         yearsInOperation: dto.yearsInOperation?.trim() || null,

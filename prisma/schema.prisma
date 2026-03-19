@@ -889,7 +889,9 @@ model TechnicianApplication {
   whatsapp       String
   email          String
   businessAddress String
+  businessLocationUrl String?
   serviceAreas   String
+  serviceAreaLinks String[] @default([])
   serviceAreaLocations Json?
   categories     String[]
   yearsInOperation String?
