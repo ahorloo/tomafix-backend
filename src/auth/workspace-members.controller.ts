@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { MemberRole } from '@prisma/client';
 import { AuthService } from './auth.service';
 import { AuthGuard } from './auth.guard';
@@ -44,6 +44,19 @@ export class WorkspaceMembersController {
     @Body() dto: { blocks?: string[] },
   ) {
     return this.auth.setStaffBlocks(workspaceId, memberId, dto.blocks || []);
+  }
+
+  @WorkspacePermission('users:manage')
+  @Delete(':memberId')
+  remove(
+    @Param('workspaceId') workspaceId: string,
+    @Param('memberId') memberId: string,
+    @Req() req: any,
+  ) {
+    return this.auth.removeWorkspaceMember(workspaceId, memberId, {
+      userId: req?.authUserId,
+      role: req?.workspaceContext?.role,
+    });
   }
 
   @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)

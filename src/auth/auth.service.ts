@@ -377,6 +377,31 @@ export class AuthService {
     return updated;
   }
 
+  async removeWorkspaceMember(workspaceId: string, memberId: string, actor?: WorkspaceActor) {
+    const row = await this.prisma.workspaceMember.findFirst({
+      where: { id: memberId, workspaceId },
+      include: { user: { select: { id: true, email: true, fullName: true } } },
+    });
+    if (!row) throw new BadRequestException('Member not found in this workspace');
+    if (row.role === MemberRole.OWNER_ADMIN) {
+      throw new ForbiddenException('Owner admins cannot be removed');
+    }
+
+    await this.prisma.workspaceMember.delete({ where: { id: memberId } });
+
+    await this.prisma.auditLog.create({
+      data: {
+        workspaceId,
+        actorUserId: actor?.userId ?? null,
+        action: 'workspace.member.removed',
+        meta: { memberId, targetUserId: row.user.id, role: row.role },
+      },
+    });
+
+    cacheBust(`billing:entitlements:${workspaceId}`);
+    return { success: true };
+  }
+
   private async assertManagerCapacity(workspaceId: string, rawPlanName: string, templateType: TemplateType) {
     if (templateType !== TemplateType.OFFICE) return;
 
