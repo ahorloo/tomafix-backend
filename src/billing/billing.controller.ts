@@ -79,7 +79,7 @@ export class BillingController {
 
   @UseGuards(AuthGuard, WorkspaceAccessGuard)
   @WorkspacePermission('users:manage')
-  @Patch('workspaces/:workspaceId/change-plan')
+  @Post('workspaces/:workspaceId/change-plan')
   changePlan(@Param('workspaceId') workspaceId: string, @Body() body: { planId: string }) {
     return this.billing.changeWorkspacePlan(workspaceId, body.planId);
   }
