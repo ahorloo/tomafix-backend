@@ -1078,7 +1078,6 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       where: { workspaceId },
       data: {
         status: SubscriptionStatus.CANCELLED,
-        canceledAt: new Date(),
         providerSubRef: null,
         updatedAt: new Date(),
       },
