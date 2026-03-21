@@ -91,6 +91,11 @@ export class BillingController {
     return this.billing.retryLatestPayment(workspaceId);
   }
 
+  @Post('workspaces/:workspaceId/cancel-subscription')
+  cancelSubscription(@Param('workspaceId') workspaceId: string, @Req() req: any) {
+    return this.billing.cancelWorkspaceSubscription(workspaceId, req.authUserId);
+  }
+
   @UseGuards(AuthGuard, WorkspaceAccessGuard)
   @WorkspacePermission('users:manage')
   @Patch('workspaces/:workspaceId/billing-status')

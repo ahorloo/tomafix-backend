@@ -1067,6 +1067,30 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
    * Verifies the reference directly with Paystack and activates the workspace
    * immediately — no webhook dependency.
    */
+
+  async cancelWorkspaceSubscription(workspaceId: string, actorUserId: string) {
+    await this.assertOwnerOrManager(workspaceId, actorUserId);
+
+    const sub = await this.prisma.subscription.findUnique({ where: { workspaceId } });
+    if (!sub) throw new NotFoundException('Subscription not found');
+
+    await this.prisma.subscription.update({
+      where: { workspaceId },
+      data: {
+        status: SubscriptionStatus.CANCELLED,
+        canceledAt: new Date(),
+        providerSubRef: null,
+        updatedAt: new Date(),
+      },
+    });
+
+    const ws = await this.prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { id: true, name: true, billingStatus: true, nextRenewal: true },
+    });
+
+    return { ok: true, workspace: ws, message: 'Subscription cancelled. Access remains until current period ends.' };
+  }
   async verifyAndActivatePayment(reference: string) {
     const payment = await this.prisma.payment.findUnique({ where: { reference } });
     if (!payment) throw new NotFoundException('Payment reference not found');
