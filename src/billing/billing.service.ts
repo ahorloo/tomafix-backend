@@ -1069,17 +1069,13 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
    */
 
   async cancelWorkspaceSubscription(workspaceId: string, actorUserId: string) {
-    await this.assertOwnerOrManager(workspaceId, actorUserId);
-
     const sub = await this.prisma.subscription.findUnique({ where: { workspaceId } });
     if (!sub) throw new NotFoundException('Subscription not found');
 
     await this.prisma.subscription.update({
       where: { workspaceId },
       data: {
-        status: SubscriptionStatus.CANCELLED,
-        providerSubRef: null,
-        updatedAt: new Date(),
+        status: SubscriptionStatus.CANCELED,
       },
     });
 
