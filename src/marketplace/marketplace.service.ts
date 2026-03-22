@@ -35,6 +35,7 @@ export interface PublicTechnicianBusinessDto {
   whatsapp: string;
   email: string;
   website?: string | null;
+  logoUrl?: string | null;
   yearsInBusiness: number;
   teamSize: string;
   availability: string;
@@ -122,6 +123,7 @@ export class MarketplaceService {
     whatsapp: string;
     email: string;
     website: string | null;
+    logoUrl?: string | null;
     categories: string[];
     businessAddress: string;
     serviceAreas: string;
@@ -152,6 +154,7 @@ export class MarketplaceService {
       whatsapp: row.whatsapp,
       email: row.email,
       website: row.website,
+      logoUrl: row.logoUrl ?? null,
       yearsInBusiness: Number.parseInt(row.yearsInOperation || '', 10) || 0,
       teamSize: row.teamSize || 'Business team',
       availability: 'Contact for availability',
