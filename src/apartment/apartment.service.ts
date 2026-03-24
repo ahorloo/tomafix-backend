@@ -79,22 +79,6 @@ export class ApartmentService {
 
   private async assertEstateWorkspace(workspaceId: string) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
-
-    const existingRecentDuplicate = await this.prisma.apartmentRequest.findFirst({
-      where: {
-        workspaceId,
-        residentUserId: actorUserId || undefined,
-        createdAt: { gte: new Date(now - dedupeWindowMs) },
-      },
-      orderBy: { createdAt: "desc" },
-      include: { resident: true, unit: true },
-    });
-
-    if (existingRecentDuplicate) {
-      const t = this.normalizeRequestText((existingRecentDuplicate as any).title);
-      const d = this.normalizeRequestText((existingRecentDuplicate as any).description);
-      if (t === normalizedTitle && d === normalizedDescription) return existingRecentDuplicate as any;
-    }
     if (ws.templateType !== TemplateType.ESTATE) {
       throw new BadRequestException('Workspace is not an ESTATE template');
     }
@@ -103,22 +87,6 @@ export class ApartmentService {
 
   private async resolveEstateIdForWorkspace(workspaceId: string, estateId?: string | null) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
-
-    const existingRecentDuplicate = await this.prisma.apartmentRequest.findFirst({
-      where: {
-        workspaceId,
-        residentUserId: actorUserId || undefined,
-        createdAt: { gte: new Date(now - dedupeWindowMs) },
-      },
-      orderBy: { createdAt: "desc" },
-      include: { resident: true, unit: true },
-    });
-
-    if (existingRecentDuplicate) {
-      const t = this.normalizeRequestText((existingRecentDuplicate as any).title);
-      const d = this.normalizeRequestText((existingRecentDuplicate as any).description);
-      if (t === normalizedTitle && d === normalizedDescription) return existingRecentDuplicate as any;
-    }
     if (ws.templateType !== TemplateType.ESTATE) return null;
 
     if (estateId) {
@@ -185,22 +153,6 @@ export class ApartmentService {
     if (cached) return cached;
 
     const ws = await this.assertPropertyWorkspace(workspaceId);
-
-    const existingRecentDuplicate = await this.prisma.apartmentRequest.findFirst({
-      where: {
-        workspaceId,
-        residentUserId: actorUserId || undefined,
-        createdAt: { gte: new Date(now - dedupeWindowMs) },
-      },
-      orderBy: { createdAt: "desc" },
-      include: { resident: true, unit: true },
-    });
-
-    if (existingRecentDuplicate) {
-      const t = this.normalizeRequestText((existingRecentDuplicate as any).title);
-      const d = this.normalizeRequestText((existingRecentDuplicate as any).description);
-      if (t === normalizedTitle && d === normalizedDescription) return existingRecentDuplicate as any;
-    }
     const resolvedEstateId = await this.resolveEstateIdForWorkspace(workspaceId, estateId);
 
     const [unitBuckets, requestBuckets] = ws.templateType === TemplateType.ESTATE
@@ -372,22 +324,6 @@ export class ApartmentService {
 
   async listUnits(workspaceId: string, actorUserId?: string, estateId?: string) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
-
-    const existingRecentDuplicate = await this.prisma.apartmentRequest.findFirst({
-      where: {
-        workspaceId,
-        residentUserId: actorUserId || undefined,
-        createdAt: { gte: new Date(now - dedupeWindowMs) },
-      },
-      orderBy: { createdAt: "desc" },
-      include: { resident: true, unit: true },
-    });
-
-    if (existingRecentDuplicate) {
-      const t = this.normalizeRequestText((existingRecentDuplicate as any).title);
-      const d = this.normalizeRequestText((existingRecentDuplicate as any).description);
-      if (t === normalizedTitle && d === normalizedDescription) return existingRecentDuplicate as any;
-    }
     const staffBlocks = await this.getStaffBlockScope(workspaceId, actorUserId);
     const resolvedEstateId = await this.resolveEstateIdForWorkspace(workspaceId, estateId);
 
@@ -416,22 +352,6 @@ export class ApartmentService {
 
   async createUnit(workspaceId: string, dto: CreateUnitDto) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
-
-    const existingRecentDuplicate = await this.prisma.apartmentRequest.findFirst({
-      where: {
-        workspaceId,
-        residentUserId: actorUserId || undefined,
-        createdAt: { gte: new Date(now - dedupeWindowMs) },
-      },
-      orderBy: { createdAt: "desc" },
-      include: { resident: true, unit: true },
-    });
-
-    if (existingRecentDuplicate) {
-      const t = this.normalizeRequestText((existingRecentDuplicate as any).title);
-      const d = this.normalizeRequestText((existingRecentDuplicate as any).description);
-      if (t === normalizedTitle && d === normalizedDescription) return existingRecentDuplicate as any;
-    }
     await this.assertUnitsPlanLimit(workspaceId);
 
     const label = dto.label.trim();
@@ -489,22 +409,6 @@ export class ApartmentService {
   async updateUnit(workspaceId: string, unitId: string, dto: Partial<CreateUnitDto>) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
 
-    const existingRecentDuplicate = await this.prisma.apartmentRequest.findFirst({
-      where: {
-        workspaceId,
-        residentUserId: actorUserId || undefined,
-        createdAt: { gte: new Date(now - dedupeWindowMs) },
-      },
-      orderBy: { createdAt: "desc" },
-      include: { resident: true, unit: true },
-    });
-
-    if (existingRecentDuplicate) {
-      const t = this.normalizeRequestText((existingRecentDuplicate as any).title);
-      const d = this.normalizeRequestText((existingRecentDuplicate as any).description);
-      if (t === normalizedTitle && d === normalizedDescription) return existingRecentDuplicate as any;
-    }
-
     const unit = ws.templateType === TemplateType.ESTATE
       ? await this.prisma.estateUnit.findFirst({ where: { id: unitId, workspaceId } })
       : await this.prisma.apartmentUnit.findFirst({ where: { id: unitId, workspaceId } });
@@ -559,22 +463,6 @@ export class ApartmentService {
   async deleteUnit(workspaceId: string, unitId: string) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
 
-    const existingRecentDuplicate = await this.prisma.apartmentRequest.findFirst({
-      where: {
-        workspaceId,
-        residentUserId: actorUserId || undefined,
-        createdAt: { gte: new Date(now - dedupeWindowMs) },
-      },
-      orderBy: { createdAt: "desc" },
-      include: { resident: true, unit: true },
-    });
-
-    if (existingRecentDuplicate) {
-      const t = this.normalizeRequestText((existingRecentDuplicate as any).title);
-      const d = this.normalizeRequestText((existingRecentDuplicate as any).description);
-      if (t === normalizedTitle && d === normalizedDescription) return existingRecentDuplicate as any;
-    }
-
     const unit = ws.templateType === TemplateType.ESTATE
       ? await this.prisma.estateUnit.findFirst({ where: { id: unitId, workspaceId } })
       : await this.prisma.apartmentUnit.findFirst({ where: { id: unitId, workspaceId } });
@@ -603,22 +491,6 @@ export class ApartmentService {
 
   async listResidents(workspaceId: string, actorUserId?: string, estateId?: string) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
-
-    const existingRecentDuplicate = await this.prisma.apartmentRequest.findFirst({
-      where: {
-        workspaceId,
-        residentUserId: actorUserId || undefined,
-        createdAt: { gte: new Date(now - dedupeWindowMs) },
-      },
-      orderBy: { createdAt: "desc" },
-      include: { resident: true, unit: true },
-    });
-
-    if (existingRecentDuplicate) {
-      const t = this.normalizeRequestText((existingRecentDuplicate as any).title);
-      const d = this.normalizeRequestText((existingRecentDuplicate as any).description);
-      if (t === normalizedTitle && d === normalizedDescription) return existingRecentDuplicate as any;
-    }
     const staffBlocks = await this.getStaffBlockScope(workspaceId, actorUserId);
 
     if (ws.templateType === TemplateType.ESTATE) {
@@ -646,22 +518,6 @@ export class ApartmentService {
 
   private async syncUnitOccupancy(workspaceId: string, unitId: string) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
-
-    const existingRecentDuplicate = await this.prisma.apartmentRequest.findFirst({
-      where: {
-        workspaceId,
-        residentUserId: actorUserId || undefined,
-        createdAt: { gte: new Date(now - dedupeWindowMs) },
-      },
-      orderBy: { createdAt: "desc" },
-      include: { resident: true, unit: true },
-    });
-
-    if (existingRecentDuplicate) {
-      const t = this.normalizeRequestText((existingRecentDuplicate as any).title);
-      const d = this.normalizeRequestText((existingRecentDuplicate as any).description);
-      if (t === normalizedTitle && d === normalizedDescription) return existingRecentDuplicate as any;
-    }
     const [unit, activeResidents] = await Promise.all([
       ws.templateType === TemplateType.ESTATE
         ? this.prisma.estateUnit.findFirst({ where: { id: unitId, workspaceId } })
@@ -685,22 +541,6 @@ export class ApartmentService {
 
   async createResident(workspaceId: string, dto: CreateResidentDto) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
-
-    const existingRecentDuplicate = await this.prisma.apartmentRequest.findFirst({
-      where: {
-        workspaceId,
-        residentUserId: actorUserId || undefined,
-        createdAt: { gte: new Date(now - dedupeWindowMs) },
-      },
-      orderBy: { createdAt: "desc" },
-      include: { resident: true, unit: true },
-    });
-
-    if (existingRecentDuplicate) {
-      const t = this.normalizeRequestText((existingRecentDuplicate as any).title);
-      const d = this.normalizeRequestText((existingRecentDuplicate as any).description);
-      if (t === normalizedTitle && d === normalizedDescription) return existingRecentDuplicate as any;
-    }
 
     if (dto.unitId) {
       const unit = ws.templateType === TemplateType.ESTATE
@@ -770,22 +610,6 @@ export class ApartmentService {
   async updateResident(workspaceId: string, residentId: string, dto: Partial<CreateResidentDto>) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
 
-    const existingRecentDuplicate = await this.prisma.apartmentRequest.findFirst({
-      where: {
-        workspaceId,
-        residentUserId: actorUserId || undefined,
-        createdAt: { gte: new Date(now - dedupeWindowMs) },
-      },
-      orderBy: { createdAt: "desc" },
-      include: { resident: true, unit: true },
-    });
-
-    if (existingRecentDuplicate) {
-      const t = this.normalizeRequestText((existingRecentDuplicate as any).title);
-      const d = this.normalizeRequestText((existingRecentDuplicate as any).description);
-      if (t === normalizedTitle && d === normalizedDescription) return existingRecentDuplicate as any;
-    }
-
     const resident = ws.templateType === TemplateType.ESTATE
       ? await this.prisma.estateResident.findFirst({ where: { id: residentId, workspaceId } })
       : await this.prisma.apartmentResident.findFirst({ where: { id: residentId, workspaceId } });
@@ -827,17 +651,17 @@ export class ApartmentService {
 
     const updated = ws.templateType === TemplateType.ESTATE
       ? await this.prisma.estateResident.update({
-      where: { id: residentId },
-      data: {
-        fullName: dto.fullName !== undefined ? dto.fullName.trim() : undefined,
-        email: dto.email !== undefined ? (dto.email?.trim().toLowerCase() || null) : undefined,
-        phone: dto.phone !== undefined ? (dto.phone?.trim() || null) : undefined,
-        unitId: dto.unitId !== undefined ? (dto.unitId || null) : undefined,
-        role: dto.role !== undefined ? dto.role : undefined,
-        status: dto.status !== undefined ? dto.status : undefined,
-      },
-      include: { unit: { select: { id: true, label: true, block: true, floor: true } } },
-      })
+          where: { id: residentId },
+          data: {
+            fullName: dto.fullName !== undefined ? dto.fullName.trim() : undefined,
+            email: dto.email !== undefined ? (dto.email?.trim().toLowerCase() || null) : undefined,
+            phone: dto.phone !== undefined ? (dto.phone?.trim() || null) : undefined,
+            unitId: dto.unitId !== undefined ? (dto.unitId || null) : undefined,
+            role: dto.role !== undefined ? dto.role : undefined,
+            status: dto.status !== undefined ? dto.status : undefined,
+          },
+          include: { unit: { select: { id: true, label: true, block: true, floor: true } } },
+        })
       : await this.prisma.apartmentResident.update({
           where: { id: residentId },
           data: {
@@ -860,22 +684,6 @@ export class ApartmentService {
   async deleteResident(workspaceId: string, residentId: string) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
 
-    const existingRecentDuplicate = await this.prisma.apartmentRequest.findFirst({
-      where: {
-        workspaceId,
-        residentUserId: actorUserId || undefined,
-        createdAt: { gte: new Date(now - dedupeWindowMs) },
-      },
-      orderBy: { createdAt: "desc" },
-      include: { resident: true, unit: true },
-    });
-
-    if (existingRecentDuplicate) {
-      const t = this.normalizeRequestText((existingRecentDuplicate as any).title);
-      const d = this.normalizeRequestText((existingRecentDuplicate as any).description);
-      if (t === normalizedTitle && d === normalizedDescription) return existingRecentDuplicate as any;
-    }
-
     const resident = ws.templateType === TemplateType.ESTATE
       ? await this.prisma.estateResident.findFirst({ where: { id: residentId, workspaceId } })
       : await this.prisma.apartmentResident.findFirst({ where: { id: residentId, workspaceId } });
@@ -885,16 +693,15 @@ export class ApartmentService {
       ? await this.prisma.estateRequest.count({ where: { workspaceId, residentId } })
       : await this.prisma.apartmentRequest.count({ where: { workspaceId, residentId } });
 
-    // Keep request history intact: archive resident instead of hard delete.
     if (requestCount > 0) {
       const archived = ws.templateType === TemplateType.ESTATE
         ? await this.prisma.estateResident.update({
-        where: { id: residentId },
-        data: {
-          status: ResidentStatus.INACTIVE,
-          unitId: null,
-        },
-      })
+            where: { id: residentId },
+            data: {
+              status: ResidentStatus.INACTIVE,
+              unitId: null,
+            },
+          })
         : await this.prisma.apartmentResident.update({ where: { id: residentId }, data: { status: ResidentStatus.INACTIVE, unitId: null } });
       if (resident.unitId) await this.syncUnitOccupancy(workspaceId, resident.unitId);
       return { ok: true, mode: 'archived', resident: archived };
@@ -912,28 +719,11 @@ export class ApartmentService {
   async forceDeleteResident(workspaceId: string, residentId: string) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
 
-    const existingRecentDuplicate = await this.prisma.apartmentRequest.findFirst({
-      where: {
-        workspaceId,
-        residentUserId: actorUserId || undefined,
-        createdAt: { gte: new Date(now - dedupeWindowMs) },
-      },
-      orderBy: { createdAt: "desc" },
-      include: { resident: true, unit: true },
-    });
-
-    if (existingRecentDuplicate) {
-      const t = this.normalizeRequestText((existingRecentDuplicate as any).title);
-      const d = this.normalizeRequestText((existingRecentDuplicate as any).description);
-      if (t === normalizedTitle && d === normalizedDescription) return existingRecentDuplicate as any;
-    }
-
     const resident = ws.templateType === TemplateType.ESTATE
       ? await this.prisma.estateResident.findFirst({ where: { id: residentId, workspaceId } })
       : await this.prisma.apartmentResident.findFirst({ where: { id: residentId, workspaceId } });
     if (!resident) throw new NotFoundException('Resident not found');
 
-    // Delete all requests first, then the resident — leaves no trace.
     if (ws.templateType === TemplateType.ESTATE) {
       await this.prisma.estateRequest.deleteMany({ where: { workspaceId, residentId } });
       await this.prisma.estateResident.delete({ where: { id: residentId } });
@@ -943,7 +733,6 @@ export class ApartmentService {
     }
     if (resident.unitId) await this.syncUnitOccupancy(workspaceId, resident.unitId);
 
-    // Revoke workspace membership so the user cannot access this workspace at all.
     if (resident.email) {
       const user = await this.prisma.user.findFirst({
         where: { email: { equals: resident.email.trim(), mode: 'insensitive' } },
@@ -958,22 +747,6 @@ export class ApartmentService {
 
   async listRequests(workspaceId: string, status?: string, actorUserId?: string, estateId?: string) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
-
-    const existingRecentDuplicate = await this.prisma.apartmentRequest.findFirst({
-      where: {
-        workspaceId,
-        residentUserId: actorUserId || undefined,
-        createdAt: { gte: new Date(now - dedupeWindowMs) },
-      },
-      orderBy: { createdAt: "desc" },
-      include: { resident: true, unit: true },
-    });
-
-    if (existingRecentDuplicate) {
-      const t = this.normalizeRequestText((existingRecentDuplicate as any).title);
-      const d = this.normalizeRequestText((existingRecentDuplicate as any).description);
-      if (t === normalizedTitle && d === normalizedDescription) return existingRecentDuplicate as any;
-    }
 
     const where: any = { workspaceId };
     const staffBlocks = await this.getStaffBlockScope(workspaceId, actorUserId);
@@ -1013,35 +786,15 @@ export class ApartmentService {
     return String(v || '').trim().replace(/\s+/g, ' ').toLowerCase();
   }
 
-
-
   async createRequest(workspaceId: string, dto: CreateRequestDto, actorUserId?: string) {
-    // duplicate-window guard (prevents accidental double submit)
-    const dedupeWindowMs = 30 * 1000;
-    const now = Date.now();
-    const normalizedTitle = this.normalizeRequestText((dto as any)?.title);
-    const normalizedDescription = this.normalizeRequestText((dto as any)?.description);
     const ws = await this.assertPropertyWorkspace(workspaceId);
-
-    const existingRecentDuplicate = await this.prisma.apartmentRequest.findFirst({
-      where: {
-        workspaceId,
-        residentUserId: actorUserId || undefined,
-        createdAt: { gte: new Date(now - dedupeWindowMs) },
-      },
-      orderBy: { createdAt: "desc" },
-      include: { resident: true, unit: true },
-    });
-
-    if (existingRecentDuplicate) {
-      const t = this.normalizeRequestText((existingRecentDuplicate as any).title);
-      const d = this.normalizeRequestText((existingRecentDuplicate as any).description);
-      if (t === normalizedTitle && d === normalizedDescription) return existingRecentDuplicate as any;
-    }
+    const dedupeWindowMs = 30 * 1000;
+    const normalizedTitle = this.normalizeRequestText(dto.title);
+    const normalizedDescription = this.normalizeRequestText(dto.description);
 
     const unit = ws.templateType === TemplateType.ESTATE
-        ? await this.prisma.estateUnit.findFirst({ where: { id: dto.unitId, workspaceId } })
-        : await this.prisma.apartmentUnit.findFirst({ where: { id: dto.unitId, workspaceId } });
+      ? await this.prisma.estateUnit.findFirst({ where: { id: dto.unitId, workspaceId } })
+      : await this.prisma.apartmentUnit.findFirst({ where: { id: dto.unitId, workspaceId } });
     if (!unit) throw new BadRequestException('unitId does not belong to this workspace');
 
     const staffBlocks = await this.getStaffBlockScope(workspaceId, actorUserId);
@@ -1063,24 +816,60 @@ export class ApartmentService {
       if (!resident) throw new BadRequestException('residentId does not belong to this workspace');
     }
 
+    const existingRecentDuplicate = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateRequest.findFirst({
+          where: {
+            workspaceId,
+            unitId: dto.unitId,
+            residentId: dto.residentId ?? null,
+            createdAt: { gte: new Date(Date.now() - dedupeWindowMs) },
+          },
+          orderBy: { createdAt: 'desc' },
+          include: {
+            unit: { select: { id: true, label: true, block: true, floor: true } },
+            resident: { select: { id: true, fullName: true } },
+          },
+        })
+      : await this.prisma.apartmentRequest.findFirst({
+          where: {
+            workspaceId,
+            unitId: dto.unitId,
+            residentId: dto.residentId ?? null,
+            createdAt: { gte: new Date(Date.now() - dedupeWindowMs) },
+          },
+          orderBy: { createdAt: 'desc' },
+          include: {
+            unit: { select: { id: true, label: true, block: true, floor: true } },
+            resident: { select: { id: true, fullName: true } },
+          },
+        });
+
+    if (existingRecentDuplicate) {
+      const recentTitle = this.normalizeRequestText(existingRecentDuplicate.title);
+      const recentDescription = this.normalizeRequestText(existingRecentDuplicate.description);
+      if (recentTitle === normalizedTitle && recentDescription === normalizedDescription) {
+        return existingRecentDuplicate as any;
+      }
+    }
+
     const created = ws.templateType === TemplateType.ESTATE
       ? await this.prisma.estateRequest.create({
-      data: {
-        id: randomUUID(),
-        workspaceId,
-        unitId: dto.unitId,
-        residentId: dto.residentId ?? null,
-        title: dto.title.trim(),
-        description: dto.description?.trim() || null,
-        photoUrl: dto.photoUrl?.trim() || null,
-        priority: dto.priority ?? RequestPriority.NORMAL,
-        status: dto.status ?? RequestStatus.PENDING,
-      },
-      include: {
-        unit: { select: { id: true, label: true, block: true, floor: true } },
-        resident: { select: { id: true, fullName: true } },
-      },
-      })
+          data: {
+            id: randomUUID(),
+            workspaceId,
+            unitId: dto.unitId,
+            residentId: dto.residentId ?? null,
+            title: dto.title.trim(),
+            description: dto.description?.trim() || null,
+            photoUrl: dto.photoUrl?.trim() || null,
+            priority: dto.priority ?? RequestPriority.NORMAL,
+            status: dto.status ?? RequestStatus.PENDING,
+          },
+          include: {
+            unit: { select: { id: true, label: true, block: true, floor: true } },
+            resident: { select: { id: true, fullName: true } },
+          },
+        })
       : await this.prisma.apartmentRequest.create({
           data: {
             id: randomUUID(),
@@ -1121,22 +910,6 @@ export class ApartmentService {
   ) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
 
-    const existingRecentDuplicate = await this.prisma.apartmentRequest.findFirst({
-      where: {
-        workspaceId,
-        residentUserId: actorUserId || undefined,
-        createdAt: { gte: new Date(now - dedupeWindowMs) },
-      },
-      orderBy: { createdAt: "desc" },
-      include: { resident: true, unit: true },
-    });
-
-    if (existingRecentDuplicate) {
-      const t = this.normalizeRequestText((existingRecentDuplicate as any).title);
-      const d = this.normalizeRequestText((existingRecentDuplicate as any).description);
-      if (t === normalizedTitle && d === normalizedDescription) return existingRecentDuplicate as any;
-    }
-
     const req = ws.templateType === TemplateType.ESTATE
       ? await this.prisma.estateRequest.findFirst({ where: { id: requestId, workspaceId } })
       : await this.prisma.apartmentRequest.findFirst({ where: { id: requestId, workspaceId } });
@@ -1144,16 +917,16 @@ export class ApartmentService {
 
     const updated = ws.templateType === TemplateType.ESTATE
       ? await this.prisma.estateRequest.update({
-      where: { id: requestId },
-      data: {
-        status: dto.status ?? undefined,
-        priority: dto.priority ?? undefined,
-      },
-      include: {
-        unit: { select: { id: true, label: true, block: true, floor: true } },
-        resident: { select: { id: true, fullName: true } },
-      },
-          })
+          where: { id: requestId },
+          data: {
+            status: dto.status ?? undefined,
+            priority: dto.priority ?? undefined,
+          },
+          include: {
+            unit: { select: { id: true, label: true, block: true, floor: true } },
+            resident: { select: { id: true, fullName: true } },
+          },
+        })
       : await this.prisma.apartmentRequest.update({
           where: { id: requestId },
           data: { status: dto.status ?? undefined, priority: dto.priority ?? undefined },
@@ -1165,22 +938,6 @@ export class ApartmentService {
 
   async listRequestMessages(workspaceId: string, requestId: string) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
-
-    const existingRecentDuplicate = await this.prisma.apartmentRequest.findFirst({
-      where: {
-        workspaceId,
-        residentUserId: actorUserId || undefined,
-        createdAt: { gte: new Date(now - dedupeWindowMs) },
-      },
-      orderBy: { createdAt: "desc" },
-      include: { resident: true, unit: true },
-    });
-
-    if (existingRecentDuplicate) {
-      const t = this.normalizeRequestText((existingRecentDuplicate as any).title);
-      const d = this.normalizeRequestText((existingRecentDuplicate as any).description);
-      if (t === normalizedTitle && d === normalizedDescription) return existingRecentDuplicate as any;
-    }
     const req = ws.templateType === TemplateType.ESTATE
       ? await this.prisma.estateRequest.findFirst({ where: { id: requestId, workspaceId } })
       : await this.prisma.apartmentRequest.findFirst({ where: { id: requestId, workspaceId } });
@@ -1197,22 +954,6 @@ export class ApartmentService {
     dto: { senderUserId?: string; senderName?: string; body: string },
   ) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
-
-    const existingRecentDuplicate = await this.prisma.apartmentRequest.findFirst({
-      where: {
-        workspaceId,
-        residentUserId: actorUserId || undefined,
-        createdAt: { gte: new Date(now - dedupeWindowMs) },
-      },
-      orderBy: { createdAt: "desc" },
-      include: { resident: true, unit: true },
-    });
-
-    if (existingRecentDuplicate) {
-      const t = this.normalizeRequestText((existingRecentDuplicate as any).title);
-      const d = this.normalizeRequestText((existingRecentDuplicate as any).description);
-      if (t === normalizedTitle && d === normalizedDescription) return existingRecentDuplicate as any;
-    }
     const req = ws.templateType === TemplateType.ESTATE
       ? await this.prisma.estateRequest.findFirst({ where: { id: requestId, workspaceId } })
       : await this.prisma.apartmentRequest.findFirst({ where: { id: requestId, workspaceId } });
