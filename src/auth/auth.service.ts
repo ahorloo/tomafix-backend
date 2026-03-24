@@ -81,7 +81,7 @@ export class AuthService {
 
     await this.sendEmailWithResend({
       to: email,
-      subject: 'Your TomaFix login code',
+      subject: `Your TomaFix login code: ${code}`, 
       html: this.otpEmailHtml(code),
     });
 
