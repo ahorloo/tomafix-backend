@@ -649,11 +649,17 @@ export class AuthService {
 
   private otpEmailHtml(code: string): string {
     return `
-      <div style="font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Arial, sans-serif; line-height: 1.4;">
-        <h2 style="margin: 0 0 12px;">TomaFix login verification</h2>
-        <p style="margin: 0 0 12px;">Use this code to sign in:</p>
-        <div style="font-size: 28px; font-weight: 800; letter-spacing: 6px; padding: 10px 14px; border-radius: 10px; background: #f3f4f6; display: inline-block;">${code}</div>
-        <p style="margin: 12px 0 0; color: #6b7280;">This code expires in 10 minutes.</p>
+      <div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial,sans-serif;line-height:1.5;color:#e6edf6;">
+        <h2 style="margin:0 0 12px;font-size:28px;line-height:1.2;color:#f8fbff;">TomaFix login verification</h2>
+        <p style="margin:0 0 14px;color:#d7e2ee;">Use this code to sign in:</p>
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;border-spacing:0;">
+          <tr>
+            <td style="padding:14px 18px;border-radius:14px;background:#ffffff;border:1px solid #d8e0ea;color:#08101f;font-size:34px;font-weight:900;letter-spacing:8px;font-family:SFMono-Regular,Menlo,Monaco,Consolas,monospace;box-shadow:inset 0 0 0 1px rgba(8,16,31,0.02);">
+              ${code}
+            </td>
+          </tr>
+        </table>
+        <p style="margin:14px 0 0;color:#aebdcb;font-size:13px;">This code expires in 10 minutes.</p>
       </div>
     `;
   }
