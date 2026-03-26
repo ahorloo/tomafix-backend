@@ -30,7 +30,7 @@ describe('AuthService', () => {
     const result = await service.sendLoginOtp('Owner@Example.com');
 
     expect(result.ok).toBe(true);
-    expect(result.devOtp).toMatch(/^\d{6}$/);
+    expect((result as any).devOtp).toMatch(/^\d{6}$/);
     expect(prisma.user.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { email: 'owner@example.com' },

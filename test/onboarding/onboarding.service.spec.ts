@@ -81,7 +81,7 @@ describe('OnboardingService', () => {
     const result = await service.sendOwnerEmailOtp('ws-1', 'owner@example.com');
 
     expect(result.ok).toBe(true);
-    expect(result.devOtp).toMatch(/^\d{6}$/);
+    expect((result as any).devOtp).toMatch(/^\d{6}$/);
     expect(tx.otpCode.create).toHaveBeenCalled();
   });
 
