@@ -208,12 +208,18 @@ export class AuthService {
 
     const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
     if (!ws) throw new BadRequestException('Workspace not found');
+    const actorRole = actor?.role as MemberRole | undefined;
     const requestedRole =
       dto.role === MemberRole.TECHNICIAN
         ? MemberRole.TECHNICIAN
         : dto.role === MemberRole.MANAGER
           ? MemberRole.MANAGER
           : MemberRole.STAFF;
+
+    // Managers can only create Staff or Technician accounts, not other Managers.
+    if (actorRole === MemberRole.MANAGER && requestedRole === MemberRole.MANAGER) {
+      throw new BadRequestException('Managers can only add Staff or Technician members.');
+    }
 
     const user = await this.prisma.user.upsert({
       where: { email },

@@ -91,10 +91,10 @@ export function hasPermission(
   permission: PermissionKey,
   policy?: PermissionPolicy | null,
 ) {
-  // Hard rule: users/roles management is owner-only.
-  // Do not allow policy overrides to grant this to staff/technicians/residents.
+  // Managers can add staff and technicians but not other managers or admins.
+  // Full role management (changing roles, area ownership) stays owner-only.
   if (permission === 'users:manage') {
-    return role === MemberRole.OWNER_ADMIN;
+    return role === MemberRole.OWNER_ADMIN || role === MemberRole.MANAGER;
   }
 
   // Hard rule: staff can view units assigned to them, but cannot create/edit/delete units.
