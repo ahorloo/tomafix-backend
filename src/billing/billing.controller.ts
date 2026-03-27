@@ -29,8 +29,11 @@ export class BillingController {
   }
 
   @Get('plans')
-  listPlans(@Query('templateType') templateType?: TemplateType) {
-    return this.billing.listPlans(templateType);
+  listPlans(
+    @Query('templateType') templateType?: TemplateType,
+    @Query('workspaceId') workspaceId?: string,
+  ) {
+    return this.billing.listPlansForRequest(templateType, workspaceId);
   }
 
   @Post('paystack/init')

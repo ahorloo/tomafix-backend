@@ -57,6 +57,18 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
     this.dunningTimer = null;
   }
 
+  async listPlansForRequest(templateType?: TemplateType, workspaceId?: string) {
+    // If no templateType but workspaceId given, resolve from the workspace record (public-safe)
+    if (!templateType && workspaceId) {
+      const ws = await this.prisma.workspace.findUnique({
+        where: { id: workspaceId },
+        select: { templateType: true },
+      });
+      if (ws?.templateType) templateType = ws.templateType;
+    }
+    return this.listPlans(templateType);
+  }
+
   async listPlans(templateType?: TemplateType) {
     const normalizePlanKey = (raw?: string) =>
       String(raw || '')
