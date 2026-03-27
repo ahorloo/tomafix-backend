@@ -58,8 +58,9 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
   }
 
   async listPlansForRequest(templateType?: TemplateType, workspaceId?: string) {
-    // If no templateType but workspaceId given, resolve from the workspace record (public-safe)
-    if (!templateType && workspaceId) {
+    // When workspaceId is provided, always resolve templateType from the DB —
+    // this is the source of truth and overrides any stale param from the client.
+    if (workspaceId) {
       const ws = await this.prisma.workspace.findUnique({
         where: { id: workspaceId },
         select: { templateType: true },
