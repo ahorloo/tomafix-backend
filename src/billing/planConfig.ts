@@ -111,7 +111,7 @@ const TEMPLATE_PRICE_OVERRIDES: Partial<Record<TemplateType, Record<PlanName, nu
     TomaPrime: 69900,
   },
   OFFICE: {
-    Starter: 14900,
+    Starter: 19900,
     Growth: 34900,
     TomaPrime: 69900,
   },

@@ -121,14 +121,14 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       OFFICE: {
         starter: {
           summary: 'For essential office operations',
-          priceText: 'GH₵ 149 / month',
+          priceText: 'GH₵ 199 / month',
           bullets: [
             'Up to 10 areas',
             'Up to 25 assets',
             '1 manager seat',
             'Requests, work orders, notices, inspections, and office community',
           ],
-          amountPesewas: 14900,
+          amountPesewas: 19900,
         },
         growth: {
           summary: 'For teams that need accountability and speed',
@@ -178,17 +178,17 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
                 { name: 'Toma Prime', amountPesewas: 69900 },
               ]
             : [
-                { name: 'Starter', amountPesewas: 14900 },
+                { name: 'Starter', amountPesewas: 19900 },
                 { name: 'Growth', amountPesewas: 34900 },
                 { name: 'Toma Prime', amountPesewas: 69900 },
               ];
 
       const legacyDefaults =
         t.key === 'OFFICE'
-          ? new Map<string, number>([
-              ['Starter', 9900],
-              ['Growth', 19900],
-              ['Toma Prime', 39900],
+          ? new Map<string, number[]>([
+              ['Starter', [9900, 14900]],
+              ['Growth', [19900]],
+              ['Toma Prime', [39900]],
             ])
           : null;
 
@@ -197,7 +197,7 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
           where: { templateId_name_interval: { templateId: t.id, name: p.name, interval: PlanInterval.MONTHLY } },
         });
 
-        if (existing && legacyDefaults?.get(p.name) === existing.amountPesewas) {
+        if (existing && legacyDefaults?.get(p.name)?.includes(existing.amountPesewas)) {
           await this.prisma.plan.update({
             where: { id: existing.id },
             data: { amountPesewas: p.amountPesewas, currency: 'GHS', isActive: true },
