@@ -35,6 +35,8 @@ $ pnpm run test:e2e
 - Production should use `PAYSTACK_MODE=live` with `sk_live_...` and `pk_live_...` keys.
 - `LOCAL_BYPASS_PAYMENT` must stay `false` anywhere you want real checkout behavior.
 - The backend now rejects mismatched Paystack mode and key prefixes at runtime.
+- The backend now also fails fast if production uses local billing flags or localhost callback/frontend URLs.
+- Non-production environments now reject `PAYSTACK_MODE=live` unless `ALLOW_LIVE_PAYSTACK_IN_DEV=true` is set for a deliberate one-off smoke test.
 
 ## Production deploy checklist
 

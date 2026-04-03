@@ -4,7 +4,19 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
-  const [aptWs, estWs, aptUnits, estUnits, aptResidents, estResidents, aptRequests, estRequests] = await Promise.all([
+  const [
+    aptWs,
+    estWs,
+    aptUnits,
+    estUnits,
+    aptResidents,
+    estResidents,
+    aptRequests,
+    estRequests,
+    aptInspections,
+    estInspections,
+    officeInspections,
+  ] = await Promise.all([
     prisma.workspace.count({ where: { templateType: 'APARTMENT' } }),
     prisma.workspace.count({ where: { templateType: 'ESTATE' } }),
     prisma.apartmentUnit.count(),
@@ -13,6 +25,9 @@ async function main() {
     prisma.estateResident.count(),
     prisma.apartmentRequest.count(),
     prisma.estateRequest.count(),
+    prisma.apartmentInspection.count(),
+    prisma.estateInspection.count(),
+    prisma.officeInspection.count(),
   ]);
 
   const archiveRows = await prisma.$queryRawUnsafe<any[]>(`SELECT COUNT(*)::int AS c FROM "RequestMessage_Archive"`);
@@ -28,7 +43,7 @@ async function main() {
         },
         blockers: {
           requestMessagesArchivedRows: Number(archiveRows?.[0]?.c || 0),
-          inspectionsRemaining: await prisma.inspection.count(),
+          inspectionsRemaining: aptInspections + estInspections + officeInspections,
         },
       },
       null,

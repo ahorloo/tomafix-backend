@@ -34,6 +34,7 @@ PAYSTACK_PUBLIC_KEY=pk_live_...
 PAYSTACK_CALLBACK_URL=https://app.tomafix.com/onboarding/payment-success
 PAYSTACK_CURRENCY_OVERRIDE=GHS
 PAYSTACK_OMIT_CURRENCY=false
+ALLOW_LIVE_PAYSTACK_IN_DEV=false
 RESEND_API_KEY=replace-with-your-resend-key
 RESEND_FROM=TomaFix <billing@tomafix.com>
 EMAIL_FROM=TomaFix <billing@tomafix.com>
@@ -76,6 +77,9 @@ Do not use test keys in production. The backend now rejects:
 
 - `PAYSTACK_MODE=live` with `sk_test_...`
 - `PAYSTACK_MODE=test` with `sk_live_...`
+- `LOCAL_BYPASS_PAYMENT=true` in production
+- `LOCAL_RELAX_GUARDS=true` in production
+- localhost/private callback or frontend URLs in production
 
 ## Sanity check after deploy
 

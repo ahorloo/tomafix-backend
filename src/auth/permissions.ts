@@ -12,7 +12,9 @@ export type PermissionKey =
   | 'notices:manage'
   | 'inspections:view'
   | 'inspections:manage'
-  | 'users:manage';
+  | 'users:manage'
+  | 'visitors:view'
+  | 'visitors:manage';
 
 export type PermissionPolicy = Partial<Record<MemberRole, Partial<Record<PermissionKey, boolean>>>>;
 
@@ -29,6 +31,8 @@ export const ALL_PERMISSIONS: PermissionKey[] = [
   'inspections:view',
   'inspections:manage',
   'users:manage',
+  'visitors:view',
+  'visitors:manage',
 ];
 
 const baseByRole: Record<MemberRole, PermissionKey[]> = {
@@ -45,6 +49,8 @@ const baseByRole: Record<MemberRole, PermissionKey[]> = {
     'inspections:view',
     'inspections:manage',
     'users:manage',
+    'visitors:view',
+    'visitors:manage',
   ],
   MANAGER: [
     'dashboard:view',
@@ -57,6 +63,8 @@ const baseByRole: Record<MemberRole, PermissionKey[]> = {
     'notices:manage',
     'inspections:view',
     'inspections:manage',
+    'visitors:view',
+    'visitors:manage',
   ],
   STAFF: [
     'dashboard:view',
@@ -68,9 +76,10 @@ const baseByRole: Record<MemberRole, PermissionKey[]> = {
     'notices:view',
     'inspections:view',
     'inspections:manage',
+    'visitors:view',
   ],
-  TECHNICIAN: ['dashboard:view', 'requests:view', 'requests:create', 'inspections:view', 'inspections:manage'],
-  RESIDENT: ['dashboard:view', 'requests:view', 'requests:create', 'notices:view'],
+  TECHNICIAN: ['dashboard:view', 'requests:view', 'requests:create', 'inspections:view', 'inspections:manage', 'visitors:view'],
+  RESIDENT: ['dashboard:view', 'requests:view', 'requests:create', 'notices:view', 'visitors:view'],
 };
 
 export function defaultPolicyFor(templateType: TemplateType): PermissionPolicy {

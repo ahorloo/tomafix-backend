@@ -77,7 +77,7 @@ export class EntitlementsGuard implements NestMiddleware {
         ? this.prisma.estate.count({ where: { workspaceId } })
         : ws.templateType === TemplateType.OFFICE
           ? this.prisma.officeAsset.count({ where: { workspaceId } })
-          : this.prisma.property.count({ where: { workspaceId } }),
+          : Promise.resolve(1),
       ws.templateType === TemplateType.ESTATE
         ? this.prisma.estateUnit.count({ where: { workspaceId } })
         : ws.templateType === TemplateType.OFFICE

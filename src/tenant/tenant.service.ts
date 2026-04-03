@@ -67,7 +67,7 @@ export class TenantService {
             email: { equals: user.email.trim(), mode: 'insensitive' },
             status: ResidentStatus.ACTIVE,
           },
-          include: { unit: { select: { id: true, label: true, block: true, floor: true } } },
+          include: { unit: { select: { id: true, label: true, block: true, floor: true, estateId: true } } },
         })
       : await this.prisma.apartmentResident.findFirst({
           where: {
@@ -97,11 +97,24 @@ export class TenantService {
           take: 20,
         });
 
-    const notices = await this.prisma.notice.findMany({
-      where: { workspaceId, audience: { in: ['ALL', 'RESIDENTS'] as any } },
-      orderBy: { createdAt: 'desc' },
-      take: 8,
-    });
+    const notices = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateNotice.findMany({
+          where: {
+            workspaceId,
+            audience: { in: ['ALL', 'RESIDENTS'] as any },
+            OR: [
+              { estateId: null },
+              ...(resident.unit && (resident.unit as any).estateId ? [{ estateId: (resident.unit as any).estateId }] : []),
+            ],
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 8,
+        })
+      : await this.prisma.apartmentNotice.findMany({
+          where: { workspaceId, audience: { in: ['ALL', 'RESIDENTS'] as any } },
+          orderBy: { createdAt: 'desc' },
+          take: 8,
+        });
 
     return {
       resident: {
@@ -197,10 +210,21 @@ export class TenantService {
   }
 
   async listTenantNotices(workspaceId: string) {
-    return this.prisma.notice.findMany({
-      where: { workspaceId, audience: { in: ['ALL', 'RESIDENTS'] as any } },
-      orderBy: { createdAt: 'desc' },
-    });
+    const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { templateType: true } });
+    if (!ws) throw new NotFoundException('Workspace not found');
+    if (ws.templateType === TemplateType.ESTATE) {
+      return this.prisma.estateNotice.findMany({
+        where: { workspaceId, audience: { in: ['ALL', 'RESIDENTS'] as any } },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+    if (ws.templateType === TemplateType.APARTMENT) {
+      return this.prisma.apartmentNotice.findMany({
+        where: { workspaceId, audience: { in: ['ALL', 'RESIDENTS'] as any } },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+    throw new BadRequestException('Tenant notices are enabled only for property templates');
   }
 
   async listMyRequestMessages(workspaceId: string, userId: string, requestId: string) {

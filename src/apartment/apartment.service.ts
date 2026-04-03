@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import {
+  EstateChargeStatus,
   Prisma,
   MemberRole,
   RequestPriority,
@@ -18,6 +19,19 @@ import { CreateUnitDto } from './dto/create-unit.dto';
 import { CreateResidentDto } from './dto/create-resident.dto';
 import { CreateRequestDto } from './dto/create-request.dto';
 import { CreateEstateDto } from './dto/create-estate.dto';
+import { UpdateRequestDto } from './dto/update-request.dto';
+import { CreateEstateChargeDto } from './dto/create-estate-charge.dto';
+import { RecordEstateChargePaymentDto } from './dto/record-estate-charge-payment.dto';
+import { UpdateEstateChargeDto } from './dto/update-estate-charge.dto';
+
+type ListPropertyRequestsOpts = {
+  status?: string;
+  actorUserId?: string;
+  estateId?: string;
+  category?: string;
+  assignedToUserId?: string;
+  overdue?: string;
+};
 
 @Injectable()
 export class ApartmentService {
@@ -115,7 +129,7 @@ export class ApartmentService {
     const limit = getEntitlements(planName, ws.templateType).limits.properties;
     const used = ws.templateType === TemplateType.ESTATE
       ? await this.prisma.estate.count({ where: { workspaceId } })
-      : await this.prisma.property.count({ where: { workspaceId } });
+      : 1;
 
     if (used >= limit) {
       throw new ForbiddenException({
@@ -745,16 +759,16 @@ export class ApartmentService {
     return { ok: true, mode: 'force_deleted' };
   }
 
-  async listRequests(workspaceId: string, status?: string, actorUserId?: string, estateId?: string) {
+  async listRequests(workspaceId: string, opts: ListPropertyRequestsOpts = {}) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
 
     const where: any = { workspaceId };
-    const staffBlocks = await this.getStaffBlockScope(workspaceId, actorUserId);
+    const staffBlocks = await this.getStaffBlockScope(workspaceId, opts.actorUserId);
     if (staffBlocks) where.unit = { block: { in: staffBlocks } };
-    if (status) where.status = status as RequestStatus;
+    if (opts.status) where.status = opts.status as RequestStatus;
 
     if (ws.templateType === TemplateType.ESTATE) {
-      const resolvedEstateId = await this.resolveEstateIdForWorkspace(workspaceId, estateId);
+      const resolvedEstateId = await this.resolveEstateIdForWorkspace(workspaceId, opts.estateId);
       if (resolvedEstateId) {
         where.unit = {
           ...(where.unit || {}),
@@ -762,14 +776,40 @@ export class ApartmentService {
         };
       }
 
-      return this.prisma.estateRequest.findMany({
+      if (opts.category?.trim()) {
+        where.category = { equals: opts.category.trim(), mode: 'insensitive' };
+      }
+      if (opts.assignedToUserId?.trim()) {
+        where.assignedToUserId = opts.assignedToUserId.trim();
+      }
+
+      const rows = await this.prisma.estateRequest.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         include: {
-          unit: { select: { id: true, label: true, block: true, floor: true } },
+          unit: {
+            select: {
+              id: true,
+              label: true,
+              block: true,
+              floor: true,
+              estate: { select: { id: true, name: true, code: true } },
+            },
+          },
           resident: { select: { id: true, fullName: true } },
         },
       });
+
+      const hydrated = rows.map((row) => ({
+        ...row,
+        isOverdue: this.isEstateRequestOverdue(row),
+      }));
+
+      if (String(opts.overdue || '').toLowerCase() === 'true') {
+        return hydrated.filter((row) => row.isOverdue);
+      }
+
+      return hydrated;
     }
 
     return this.prisma.apartmentRequest.findMany({
@@ -782,8 +822,111 @@ export class ApartmentService {
     });
   }
 
+  async getRequest(workspaceId: string, requestId: string) {
+    const ws = await this.assertPropertyWorkspace(workspaceId);
+
+    if (ws.templateType === TemplateType.ESTATE) {
+      const request = await this.prisma.estateRequest.findFirst({
+        where: { id: requestId, workspaceId },
+        include: {
+          unit: {
+            select: {
+              id: true,
+              label: true,
+              block: true,
+              floor: true,
+              estate: { select: { id: true, name: true, code: true } },
+            },
+          },
+          resident: { select: { id: true, fullName: true } },
+        },
+      });
+      if (!request) throw new NotFoundException('Request not found');
+      return {
+        ...request,
+        isOverdue: this.isEstateRequestOverdue(request),
+      };
+    }
+
+    const request = await this.prisma.apartmentRequest.findFirst({
+      where: { id: requestId, workspaceId },
+      include: {
+        unit: { select: { id: true, label: true, block: true, floor: true } },
+        resident: { select: { id: true, fullName: true } },
+      },
+    });
+    if (!request) throw new NotFoundException('Request not found');
+    return request;
+  }
+
   private normalizeRequestText(v?: string | null) {
     return String(v || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  }
+
+  private normalizeOptionalText(v?: string | null) {
+    const trimmed = String(v || '').trim();
+    return trimmed || null;
+  }
+
+  private propertyRequestSlaDeadline(createdAt: Date, priority: RequestPriority) {
+    const slaHours: Record<RequestPriority, number> = {
+      [RequestPriority.LOW]: 72,
+      [RequestPriority.NORMAL]: 24,
+      [RequestPriority.HIGH]: 12,
+      [RequestPriority.URGENT]: 4,
+    };
+    return new Date(createdAt.getTime() + (slaHours[priority] ?? 24) * 3600000);
+  }
+
+  private isOpenRequestStatus(status: RequestStatus) {
+    return status === RequestStatus.PENDING || status === RequestStatus.IN_PROGRESS;
+  }
+
+  private isEstateRequestOverdue(request: {
+    status: RequestStatus;
+    priority: RequestPriority;
+    createdAt: Date;
+    dueAt?: Date | null;
+  }) {
+    if (!this.isOpenRequestStatus(request.status)) return false;
+    const deadline = request.dueAt || this.propertyRequestSlaDeadline(request.createdAt, request.priority);
+    return Date.now() > deadline.getTime();
+  }
+
+  private async resolveEstateRequestAssignment(workspaceId: string, assignedToUserId?: string | null) {
+    if (assignedToUserId === undefined) return undefined;
+
+    const normalizedUserId = String(assignedToUserId || '').trim();
+    if (!normalizedUserId) {
+      return { assignedToUserId: null, assignedToName: null };
+    }
+
+    const member = await this.prisma.workspaceMember.findFirst({
+      where: {
+        workspaceId,
+        userId: normalizedUserId,
+        isActive: true,
+        role: { in: [MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF, MemberRole.TECHNICIAN] },
+      },
+      select: {
+        userId: true,
+        user: {
+          select: {
+            fullName: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    if (!member) {
+      throw new BadRequestException('assignedToUserId must belong to an active workspace team member');
+    }
+
+    return {
+      assignedToUserId: member.userId,
+      assignedToName: member.user.fullName || member.user.email || 'Team member',
+    };
   }
 
   async createRequest(workspaceId: string, dto: CreateRequestDto, actorUserId?: string) {
@@ -848,28 +991,61 @@ export class ApartmentService {
       const recentTitle = this.normalizeRequestText(existingRecentDuplicate.title);
       const recentDescription = this.normalizeRequestText(existingRecentDuplicate.description);
       if (recentTitle === normalizedTitle && recentDescription === normalizedDescription) {
+        if (ws.templateType === TemplateType.ESTATE) {
+          return {
+            ...(existingRecentDuplicate as any),
+            isOverdue: this.isEstateRequestOverdue(existingRecentDuplicate as any),
+          };
+        }
         return existingRecentDuplicate as any;
       }
     }
 
     const created = ws.templateType === TemplateType.ESTATE
-      ? await this.prisma.estateRequest.create({
-          data: {
-            id: randomUUID(),
-            workspaceId,
-            unitId: dto.unitId,
-            residentId: dto.residentId ?? null,
-            title: dto.title.trim(),
-            description: dto.description?.trim() || null,
-            photoUrl: dto.photoUrl?.trim() || null,
-            priority: dto.priority ?? RequestPriority.NORMAL,
-            status: dto.status ?? RequestStatus.PENDING,
-          },
-          include: {
-            unit: { select: { id: true, label: true, block: true, floor: true } },
-            resident: { select: { id: true, fullName: true } },
-          },
-        })
+      ? await (async () => {
+          const assignment = await this.resolveEstateRequestAssignment(workspaceId, dto.assignedToUserId);
+          const status = dto.status ?? RequestStatus.PENDING;
+          const createdRequest = await this.prisma.estateRequest.create({
+            data: {
+              id: randomUUID(),
+              workspaceId,
+              unitId: dto.unitId,
+              residentId: dto.residentId ?? null,
+              title: dto.title.trim(),
+              description: dto.description?.trim() || null,
+              photoUrl: dto.photoUrl?.trim() || null,
+              category: this.normalizeOptionalText(dto.category),
+              assignedToUserId: assignment?.assignedToUserId ?? null,
+              assignedToName: assignment?.assignedToName ?? null,
+              vendorName: this.normalizeOptionalText(dto.vendorName),
+              dueAt: dto.dueAt ? new Date(dto.dueAt) : null,
+              resolvedAt:
+                status === RequestStatus.RESOLVED || status === RequestStatus.CLOSED ? new Date() : null,
+              estimatedCost:
+                dto.estimatedCost !== undefined && dto.estimatedCost !== null && Number.isFinite(Number(dto.estimatedCost))
+                  ? Number(dto.estimatedCost)
+                  : null,
+              priority: dto.priority ?? RequestPriority.NORMAL,
+              status,
+            },
+            include: {
+              unit: {
+                select: {
+                  id: true,
+                  label: true,
+                  block: true,
+                  floor: true,
+                  estate: { select: { id: true, name: true, code: true } },
+                },
+              },
+              resident: { select: { id: true, fullName: true } },
+            },
+          });
+          return {
+            ...createdRequest,
+            isOverdue: this.isEstateRequestOverdue(createdRequest),
+          };
+        })()
       : await this.prisma.apartmentRequest.create({
           data: {
             id: randomUUID(),
@@ -906,7 +1082,7 @@ export class ApartmentService {
   async updateRequest(
     workspaceId: string,
     requestId: string,
-    dto: { status?: RequestStatus; priority?: RequestPriority },
+    dto: UpdateRequestDto,
   ) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
 
@@ -915,25 +1091,68 @@ export class ApartmentService {
       : await this.prisma.apartmentRequest.findFirst({ where: { id: requestId, workspaceId } });
     if (!req) throw new NotFoundException('Request not found');
 
-    const updated = ws.templateType === TemplateType.ESTATE
-      ? await this.prisma.estateRequest.update({
-          where: { id: requestId },
-          data: {
-            status: dto.status ?? undefined,
-            priority: dto.priority ?? undefined,
-          },
-          include: {
-            unit: { select: { id: true, label: true, block: true, floor: true } },
-            resident: { select: { id: true, fullName: true } },
-          },
-        })
-      : await this.prisma.apartmentRequest.update({
-          where: { id: requestId },
-          data: { status: dto.status ?? undefined, priority: dto.priority ?? undefined },
-          include: { unit: { select: { id: true, label: true, block: true, floor: true } }, resident: { select: { id: true, fullName: true } } },
-        });
+    if (ws.templateType === TemplateType.ESTATE) {
+      const estateReq = req as any;
+      const assignment = await this.resolveEstateRequestAssignment(workspaceId, dto.assignedToUserId);
+      const nextStatus = dto.status ?? estateReq.status;
+      const resolvedAt =
+        dto.status !== undefined
+          ? nextStatus === RequestStatus.RESOLVED || nextStatus === RequestStatus.CLOSED
+            ? estateReq.resolvedAt || new Date()
+            : null
+          : undefined;
 
-    return updated;
+      const updated = await this.prisma.estateRequest.update({
+        where: { id: requestId },
+        data: {
+          status: dto.status ?? undefined,
+          priority: dto.priority ?? undefined,
+          category:
+            dto.category !== undefined ? this.normalizeOptionalText(dto.category) : undefined,
+          assignedToUserId:
+            assignment !== undefined ? assignment.assignedToUserId : undefined,
+          assignedToName:
+            assignment !== undefined ? assignment.assignedToName : undefined,
+          vendorName:
+            dto.vendorName !== undefined ? this.normalizeOptionalText(dto.vendorName) : undefined,
+          dueAt:
+            dto.dueAt !== undefined ? (dto.dueAt ? new Date(dto.dueAt) : null) : undefined,
+          estimatedCost:
+            dto.estimatedCost !== undefined
+              ? dto.estimatedCost === null || dto.estimatedCost === ('' as any)
+                ? null
+                : Number(dto.estimatedCost)
+              : undefined,
+          resolvedAt,
+        },
+        include: {
+          unit: {
+            select: {
+              id: true,
+              label: true,
+              block: true,
+              floor: true,
+              estate: { select: { id: true, name: true, code: true } },
+            },
+          },
+          resident: { select: { id: true, fullName: true } },
+        },
+      });
+
+      return {
+        ...updated,
+        isOverdue: this.isEstateRequestOverdue(updated),
+      };
+    }
+
+    return this.prisma.apartmentRequest.update({
+      where: { id: requestId },
+      data: { status: dto.status ?? undefined, priority: dto.priority ?? undefined },
+      include: {
+        unit: { select: { id: true, label: true, block: true, floor: true } },
+        resident: { select: { id: true, fullName: true } },
+      },
+    });
   }
 
   async listRequestMessages(workspaceId: string, requestId: string) {
@@ -1008,5 +1227,475 @@ export class ApartmentService {
     }
 
     return msg;
+  }
+
+  private normalizeCurrencyAmount(value: number) {
+    const amount = Number(value);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new BadRequestException('Amount must be greater than 0');
+    }
+    return Math.round(amount * 100) / 100;
+  }
+
+  private deriveEstateChargeStatus(args: {
+    amount: number;
+    paidAmount: number;
+    dueDate: Date;
+    forcedStatus?: EstateChargeStatus | null;
+  }) {
+    if (args.forcedStatus === EstateChargeStatus.VOID) {
+      return EstateChargeStatus.VOID;
+    }
+
+    const safeAmount = Math.max(args.amount, 0);
+    const safePaidAmount = Math.max(args.paidAmount, 0);
+    if (safePaidAmount >= safeAmount - 0.009) {
+      return EstateChargeStatus.PAID;
+    }
+    if (args.dueDate.getTime() < Date.now()) {
+      return EstateChargeStatus.OVERDUE;
+    }
+    if (safePaidAmount > 0) {
+      return EstateChargeStatus.PARTIALLY_PAID;
+    }
+    return EstateChargeStatus.POSTED;
+  }
+
+  private decorateEstateCharge(charge: any) {
+    const paidAmount = Math.round(
+      ((charge.payments || []) as Array<{ amount: number }>).reduce((sum, payment) => sum + Number(payment.amount || 0), 0) *
+        100,
+    ) / 100;
+    const outstandingAmount = Math.max(Math.round((Number(charge.amount || 0) - paidAmount) * 100) / 100, 0);
+    const status = this.deriveEstateChargeStatus({
+      amount: Number(charge.amount || 0),
+      paidAmount,
+      dueDate: new Date(charge.dueDate),
+      forcedStatus: charge.status,
+    });
+
+    return {
+      ...charge,
+      status,
+      paidAmount,
+      outstandingAmount,
+      isInArrears:
+        status === EstateChargeStatus.OVERDUE && outstandingAmount > 0,
+    };
+  }
+
+  async getFinanceSummary(workspaceId: string, estateId?: string) {
+    await this.assertEstateWorkspace(workspaceId);
+    const resolvedEstateId = await this.resolveEstateIdForWorkspace(workspaceId, estateId);
+
+    const charges = await this.prisma.estateCharge.findMany({
+      where: { workspaceId, ...(resolvedEstateId ? { estateId: resolvedEstateId } : {}) },
+      include: {
+        estate: { select: { id: true, name: true, code: true } },
+        unit: { select: { id: true, label: true, block: true, floor: true } },
+        resident: { select: { id: true, fullName: true, email: true } },
+        payments: { orderBy: { paidAt: 'desc' } },
+      },
+      orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }],
+    });
+
+    const decoratedCharges = charges.map((charge) => this.decorateEstateCharge(charge));
+    const activeCharges = decoratedCharges.filter((charge) => charge.status !== EstateChargeStatus.VOID);
+
+    const allPayments = activeCharges
+      .flatMap((charge) =>
+        (charge.payments || []).map((payment: any) => ({
+          ...payment,
+          chargeId: charge.id,
+          chargeTitle: charge.title,
+          resident: charge.resident,
+          unit: charge.unit,
+          estate: charge.estate,
+        })),
+      )
+      .sort((a, b) => +new Date(b.paidAt) - +new Date(a.paidAt));
+
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const totals = activeCharges.reduce(
+      (acc, charge) => {
+        acc.billed += Number(charge.amount || 0);
+        acc.paid += Number(charge.paidAmount || 0);
+        acc.outstanding += Number(charge.outstandingAmount || 0);
+        if (charge.isInArrears) {
+          acc.overdue += Number(charge.outstandingAmount || 0);
+          if (charge.resident?.id) acc.arrearsResidents.add(charge.resident.id);
+        }
+        return acc;
+      },
+      {
+        billed: 0,
+        paid: 0,
+        outstanding: 0,
+        overdue: 0,
+        arrearsResidents: new Set<string>(),
+      },
+    );
+
+    const collectedThisMonth = allPayments
+      .filter((payment) => new Date(payment.paidAt).getTime() >= monthStart.getTime())
+      .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+
+    const balanceMap = new Map<
+      string,
+      {
+        residentId: string | null;
+        residentName: string;
+        unitLabel: string;
+        propertyName: string;
+        billedAmount: number;
+        paidAmount: number;
+        outstandingAmount: number;
+        overdueAmount: number;
+        chargeCount: number;
+      }
+    >();
+
+    activeCharges.forEach((charge) => {
+      const key = charge.resident?.id || `charge:${charge.id}`;
+      const current = balanceMap.get(key) || {
+        residentId: charge.resident?.id || null,
+        residentName: charge.resident?.fullName || 'Unassigned resident',
+        unitLabel: charge.unit?.label || 'No unit',
+        propertyName: charge.estate?.name || 'No property',
+        billedAmount: 0,
+        paidAmount: 0,
+        outstandingAmount: 0,
+        overdueAmount: 0,
+        chargeCount: 0,
+      };
+
+      current.billedAmount += Number(charge.amount || 0);
+      current.paidAmount += Number(charge.paidAmount || 0);
+      current.outstandingAmount += Number(charge.outstandingAmount || 0);
+      current.chargeCount += 1;
+      if (charge.isInArrears) current.overdueAmount += Number(charge.outstandingAmount || 0);
+      balanceMap.set(key, current);
+    });
+
+    const balances = [...balanceMap.values()]
+      .map((balance) => ({
+        ...balance,
+        billedAmount: Math.round(balance.billedAmount * 100) / 100,
+        paidAmount: Math.round(balance.paidAmount * 100) / 100,
+        outstandingAmount: Math.round(balance.outstandingAmount * 100) / 100,
+        overdueAmount: Math.round(balance.overdueAmount * 100) / 100,
+      }))
+      .sort((a, b) => b.outstandingAmount - a.outstandingAmount || a.residentName.localeCompare(b.residentName));
+
+    return {
+      totals: {
+        billed: Math.round(totals.billed * 100) / 100,
+        paid: Math.round(totals.paid * 100) / 100,
+        outstanding: Math.round(totals.outstanding * 100) / 100,
+        overdue: Math.round(totals.overdue * 100) / 100,
+        collectedThisMonth: Math.round(collectedThisMonth * 100) / 100,
+        residentsInArrears: totals.arrearsResidents.size,
+        activeCharges: activeCharges.length,
+      },
+      balances,
+      recentCharges: decoratedCharges
+        .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
+        .slice(0, 8),
+      recentPayments: allPayments.slice(0, 8),
+    };
+  }
+
+  async listFinanceCharges(workspaceId: string, estateId?: string, status?: string) {
+    await this.assertEstateWorkspace(workspaceId);
+    const resolvedEstateId = await this.resolveEstateIdForWorkspace(workspaceId, estateId);
+
+    const charges = await this.prisma.estateCharge.findMany({
+      where: { workspaceId, ...(resolvedEstateId ? { estateId: resolvedEstateId } : {}) },
+      include: {
+        estate: { select: { id: true, name: true, code: true } },
+        unit: { select: { id: true, label: true, block: true, floor: true } },
+        resident: { select: { id: true, fullName: true, email: true } },
+        payments: { orderBy: { paidAt: 'desc' } },
+      },
+      orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }],
+    });
+
+    const rows = charges.map((charge) => this.decorateEstateCharge(charge));
+    if (status) {
+      return rows.filter((charge) => charge.status === (status as EstateChargeStatus));
+    }
+    return rows;
+  }
+
+  async createFinanceCharge(workspaceId: string, dto: CreateEstateChargeDto) {
+    await this.assertEstateWorkspace(workspaceId);
+
+    const resident = await this.prisma.estateResident.findFirst({
+      where: { id: dto.residentId, workspaceId },
+      include: {
+        unit: {
+          select: {
+            id: true,
+            label: true,
+            estateId: true,
+            estate: { select: { id: true, name: true, code: true } },
+          },
+        },
+      },
+    });
+    if (!resident) throw new BadRequestException('residentId does not belong to this workspace');
+    if (!resident.unit?.estateId || !resident.unitId) {
+      throw new BadRequestException('Resident must be assigned to a property unit before posting a charge');
+    }
+
+    const dueDate = new Date(dto.dueDate);
+    if (Number.isNaN(dueDate.getTime())) throw new BadRequestException('Invalid dueDate');
+
+    const amount = this.normalizeCurrencyAmount(dto.amount);
+    const initialStatus = this.deriveEstateChargeStatus({
+      amount,
+      paidAmount: 0,
+      dueDate,
+    });
+
+    const created = await this.prisma.estateCharge.create({
+      data: {
+        workspaceId,
+        estateId: resident.unit?.estateId || null,
+        unitId: resident.unitId,
+        residentId: resident.id,
+        title: dto.title.trim(),
+        category: this.normalizeOptionalText(dto.category),
+        notes: this.normalizeOptionalText(dto.notes),
+        amount,
+        dueDate,
+        status: initialStatus,
+      },
+      include: {
+        estate: { select: { id: true, name: true, code: true } },
+        unit: { select: { id: true, label: true, block: true, floor: true } },
+        resident: { select: { id: true, fullName: true, email: true } },
+        payments: { orderBy: { paidAt: 'desc' } },
+      },
+    });
+
+    return this.decorateEstateCharge(created);
+  }
+
+  async updateFinanceCharge(workspaceId: string, chargeId: string, dto: UpdateEstateChargeDto) {
+    await this.assertEstateWorkspace(workspaceId);
+
+    const charge = await this.prisma.estateCharge.findFirst({
+      where: { id: chargeId, workspaceId },
+      include: { payments: true },
+    });
+    if (!charge) throw new NotFoundException('Charge not found');
+
+    const paidAmount = (charge.payments || []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+    const nextAmount = dto.amount !== undefined ? this.normalizeCurrencyAmount(dto.amount) : Number(charge.amount || 0);
+    if (nextAmount + 0.009 < paidAmount) {
+      throw new BadRequestException('Charge amount cannot be less than the amount already paid');
+    }
+
+    const nextDueDate = dto.dueDate !== undefined ? new Date(dto.dueDate) : new Date(charge.dueDate);
+    if (Number.isNaN(nextDueDate.getTime())) throw new BadRequestException('Invalid dueDate');
+
+    const forcedStatus = dto.status === EstateChargeStatus.VOID ? EstateChargeStatus.VOID : charge.status;
+    const nextStatus = this.deriveEstateChargeStatus({
+      amount: nextAmount,
+      paidAmount,
+      dueDate: nextDueDate,
+      forcedStatus,
+    });
+
+    const updated = await this.prisma.estateCharge.update({
+      where: { id: chargeId },
+      data: {
+        title: dto.title !== undefined ? dto.title.trim() : undefined,
+        category: dto.category !== undefined ? this.normalizeOptionalText(dto.category) : undefined,
+        notes: dto.notes !== undefined ? this.normalizeOptionalText(dto.notes) : undefined,
+        amount: dto.amount !== undefined ? nextAmount : undefined,
+        dueDate: dto.dueDate !== undefined ? nextDueDate : undefined,
+        status: nextStatus,
+      },
+      include: {
+        estate: { select: { id: true, name: true, code: true } },
+        unit: { select: { id: true, label: true, block: true, floor: true } },
+        resident: { select: { id: true, fullName: true, email: true } },
+        payments: { orderBy: { paidAt: 'desc' } },
+      },
+    });
+
+    return this.decorateEstateCharge(updated);
+  }
+
+  async listFinancePayments(workspaceId: string, estateId?: string) {
+    await this.assertEstateWorkspace(workspaceId);
+    const resolvedEstateId = await this.resolveEstateIdForWorkspace(workspaceId, estateId);
+
+    return this.prisma.estateChargePayment.findMany({
+      where: {
+        workspaceId,
+        ...(resolvedEstateId ? { charge: { is: { estateId: resolvedEstateId } } } : {}),
+      },
+      include: {
+        charge: {
+          select: {
+            id: true,
+            title: true,
+            amount: true,
+            currency: true,
+            resident: { select: { id: true, fullName: true } },
+            unit: { select: { id: true, label: true } },
+            estate: { select: { id: true, name: true, code: true } },
+          },
+        },
+      },
+      orderBy: [{ paidAt: 'desc' }, { createdAt: 'desc' }],
+    });
+  }
+
+  async recordFinancePayment(workspaceId: string, dto: RecordEstateChargePaymentDto) {
+    await this.assertEstateWorkspace(workspaceId);
+
+    const charge = await this.prisma.estateCharge.findFirst({
+      where: { id: dto.chargeId, workspaceId },
+      include: {
+        payments: true,
+        resident: { select: { id: true, fullName: true } },
+        unit: { select: { id: true, label: true } },
+        estate: { select: { id: true, name: true, code: true } },
+      },
+    });
+    if (!charge) throw new BadRequestException('chargeId does not belong to this workspace');
+    if (charge.status === EstateChargeStatus.VOID) {
+      throw new BadRequestException('Cannot record payment against a void charge');
+    }
+
+    const amount = this.normalizeCurrencyAmount(dto.amount);
+    const paidSoFar = (charge.payments || []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+    const outstanding = Math.max(Number(charge.amount || 0) - paidSoFar, 0);
+    if (amount > outstanding + 0.009) {
+      throw new BadRequestException('Payment amount exceeds the remaining outstanding balance');
+    }
+
+    const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
+    if (Number.isNaN(paidAt.getTime())) throw new BadRequestException('Invalid paidAt date');
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const payment = await tx.estateChargePayment.create({
+        data: {
+          workspaceId,
+          chargeId: charge.id,
+          amount,
+          paidAt,
+          method: this.normalizeOptionalText(dto.method),
+          reference: this.normalizeOptionalText(dto.reference),
+          notes: this.normalizeOptionalText(dto.notes),
+        },
+        include: {
+          charge: {
+            select: {
+              id: true,
+              title: true,
+              amount: true,
+              currency: true,
+              resident: { select: { id: true, fullName: true } },
+              unit: { select: { id: true, label: true } },
+              estate: { select: { id: true, name: true, code: true } },
+            },
+          },
+        },
+      });
+
+      const totalPaid = paidSoFar + amount;
+      const nextStatus = this.deriveEstateChargeStatus({
+        amount: Number(charge.amount || 0),
+        paidAmount: totalPaid,
+        dueDate: new Date(charge.dueDate),
+        forcedStatus: charge.status,
+      });
+
+      await tx.estateCharge.update({
+        where: { id: charge.id },
+        data: { status: nextStatus },
+      });
+
+      return payment;
+    });
+
+    return result;
+  }
+
+  // ── Recurring Charges ──────────────────────────────────────────────────────
+
+  async listRecurringCharges(workspaceId: string, estateId?: string) {
+    return this.prisma.recurringCharge.findMany({
+      where: {
+        workspaceId,
+        ...(estateId ? { estateId } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async createRecurringCharge(workspaceId: string, dto: any) {
+    const { title, category, amount, currency, frequency, dayOfMonth, estateId, notes } = dto;
+
+    const now = new Date();
+    const nextRun = new Date(now);
+    if (frequency === 'MONTHLY' || frequency === 'QUARTERLY') {
+      nextRun.setMonth(nextRun.getMonth() + (frequency === 'QUARTERLY' ? 3 : 1));
+      if (dayOfMonth) nextRun.setDate(parseInt(dayOfMonth, 10));
+      nextRun.setHours(0, 0, 0, 0);
+    } else if (frequency === 'WEEKLY') {
+      nextRun.setDate(nextRun.getDate() + 7);
+      nextRun.setHours(0, 0, 0, 0);
+    } else if (frequency === 'YEARLY') {
+      nextRun.setFullYear(nextRun.getFullYear() + 1);
+      nextRun.setHours(0, 0, 0, 0);
+    } else {
+      nextRun.setDate(nextRun.getDate() + 1);
+      nextRun.setHours(0, 0, 0, 0);
+    }
+
+    return this.prisma.recurringCharge.create({
+      data: {
+        workspaceId,
+        estateId: estateId || null,
+        title,
+        category: category || null,
+        amount: parseFloat(String(amount)),
+        currency: currency || 'GHS',
+        frequency,
+        dayOfMonth: dayOfMonth ? parseInt(String(dayOfMonth), 10) : null,
+        notes: notes || null,
+        isActive: true,
+        nextRunAt: nextRun,
+      },
+    });
+  }
+
+  async updateRecurringCharge(workspaceId: string, scheduleId: string, dto: any) {
+    const existing = await this.prisma.recurringCharge.findFirst({ where: { id: scheduleId, workspaceId } });
+    if (!existing) throw new Error('Recurring charge not found');
+    return this.prisma.recurringCharge.update({
+      where: { id: scheduleId },
+      data: {
+        title: dto.title !== undefined ? dto.title : existing.title,
+        category: dto.category !== undefined ? dto.category : existing.category,
+        amount: dto.amount !== undefined ? parseFloat(String(dto.amount)) : existing.amount,
+        isActive: dto.isActive !== undefined ? Boolean(dto.isActive) : existing.isActive,
+        notes: dto.notes !== undefined ? dto.notes : existing.notes,
+      },
+    });
+  }
+
+  async deleteRecurringCharge(workspaceId: string, scheduleId: string) {
+    const existing = await this.prisma.recurringCharge.findFirst({ where: { id: scheduleId, workspaceId } });
+    if (!existing) throw new Error('Recurring charge not found');
+    await this.prisma.recurringCharge.delete({ where: { id: scheduleId } });
+    return { success: true };
   }
 }

@@ -3,6 +3,7 @@ import { ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
 import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
+import { assertSafeBillingRuntimeEnv } from './billing/runtime-billing-env.guard';
 
 function isLocalDevOrigin(origin: string): boolean {
   try {
@@ -47,6 +48,8 @@ function parseCorsOrigins(): string[] {
 }
 
 async function bootstrap() {
+  assertSafeBillingRuntimeEnv(process.env);
+
   // ✅ rawBody: needed for Paystack webhook signature verification
   const app = await NestFactory.create(AppModule, { rawBody: true });
 

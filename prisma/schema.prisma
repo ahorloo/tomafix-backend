@@ -71,8 +71,25 @@ enum UnitStatus {
   MAINTENANCE
 }
 
+enum VisitorStatus {
+  EXPECTED
+  CHECKED_IN
+  CHECKED_OUT
+  CANCELLED
+  EXPIRED
+}
+
+enum RecurringFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
 enum ResidentRole {
   TENANT
+  OWNER
   MANAGER
 }
 
@@ -148,6 +165,14 @@ enum InspectionScope {
   FLOOR
 }
 
+enum EstateChargeStatus {
+  POSTED
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  VOID
+}
+
 model Template {
   id          String       @id @default(cuid())
   key         TemplateType @unique
@@ -196,9 +221,10 @@ model Workspace {
 
   // Apartment / Estate core
   estates                  Estate[]
-  properties               Property[]
-  notices                  Notice[]
-  inspections              Inspection[]
+  apartmentNotices         ApartmentNotice[]
+  apartmentInspections     ApartmentInspection[]
+  estateNotices            EstateNotice[]
+  estateInspections        EstateInspection[]
   staffBlockAssignments    StaffBlockAssignment[]
   apartmentUnits           ApartmentUnit[]
   apartmentResidents       ApartmentResident[]
@@ -206,6 +232,10 @@ model Workspace {
   estateUnits              EstateUnit[]
   estateResidents          EstateResident[]
   estateRequests           EstateRequest[]
+  estateCharges            EstateCharge[]
+  estateChargePayments     EstateChargePayment[]
+  officeNotices               OfficeNotice[]
+  officeInspections           OfficeInspection[]
   officeAssets                OfficeAsset[]
   officeWorkOrders            OfficeWorkOrder[]
   apartmentRequestMessages    ApartmentRequestMessage[]
@@ -217,6 +247,10 @@ model Workspace {
   officeWorkOrderMessages     OfficeWorkOrderMessage[]
   officeCommunityChannels     OfficeCommunityChannel[]
   officeCommunityMessages     OfficeCommunityMessage[]
+
+  // Visitor management
+  visitors          Visitor[]
+  recurringCharges  RecurringCharge[]
 
   // Integrations
   slackWebhookUrl    String?
@@ -441,30 +475,35 @@ model Estate {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  estateUnits  EstateUnit[]
-  notices      Notice[]
-  inspections  Inspection[]
+  workspace         Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  estateUnits       EstateUnit[]
+  estateNotices     EstateNotice[]
+  estateInspections EstateInspection[]
+  charges           EstateCharge[]
 
   @@unique([workspaceId, name])
   @@unique([workspaceId, code])
   @@index([workspaceId])
 }
 
-model Property {
-  id          String   @id @default(cuid())
+model ApartmentNotice {
+  id          String         @id @default(cuid())
   workspaceId String
-  name        String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  title       String
+  body        String
+  audience    NoticeAudience @default(ALL)
+  seenBy      Json?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  @@unique([workspaceId, name])
   @@index([workspaceId])
+  @@index([createdAt])
+  @@index([workspaceId, audience, createdAt])
 }
 
-model Notice {
+model EstateNotice {
   id          String         @id @default(cuid())
   workspaceId String
   estateId    String?
@@ -484,7 +523,48 @@ model Notice {
   @@index([createdAt])
 }
 
-model Inspection {
+model OfficeNotice {
+  id          String         @id @default(cuid())
+  workspaceId String
+  title       String
+  body        String
+  audience    NoticeAudience @default(ALL)
+  seenBy      Json?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([createdAt])
+  @@index([workspaceId, audience, createdAt])
+}
+
+model ApartmentInspection {
+  id          String           @id @default(cuid())
+  workspaceId String
+  unitId      String?
+  scope       InspectionScope  @default(UNIT)
+  block       String?
+  floor       String?
+  title       String
+  dueDate     DateTime
+  checklist   Json?
+  status      InspectionStatus @default(SCHEDULED)
+  result      String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  unit      ApartmentUnit? @relation(fields: [unitId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([workspaceId, scope, block, floor])
+  @@index([unitId])
+  @@index([workspaceId, dueDate])
+}
+
+model EstateInspection {
   id          String           @id @default(cuid())
   workspaceId String
   estateId    String?
@@ -500,14 +580,39 @@ model Inspection {
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  estate    Estate?   @relation(fields: [estateId], references: [id], onDelete: SetNull)
+  workspace Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  estate    Estate?     @relation(fields: [estateId], references: [id], onDelete: SetNull)
+  unit      EstateUnit? @relation(fields: [unitId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId])
   @@index([estateId])
   @@index([workspaceId, estateId, scope, block, floor])
   @@index([unitId])
   @@index([workspaceId, estateId, dueDate])
+}
+
+model OfficeInspection {
+  id          String           @id @default(cuid())
+  workspaceId String
+  areaId      String?
+  scope       InspectionScope  @default(UNIT)
+  block       String?
+  floor       String?
+  title       String
+  dueDate     DateTime
+  checklist   Json?
+  status      InspectionStatus @default(SCHEDULED)
+  result      String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  workspace Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  area      OfficeArea? @relation(fields: [areaId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([areaId])
+  @@index([workspaceId, scope, block, floor])
+  @@index([workspaceId, dueDate])
 }
 
 // Template-separated physical tables (phase 2)
@@ -524,6 +629,7 @@ model ApartmentUnit {
   workspace          Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   apartmentResidents ApartmentResident[]
   apartmentRequests  ApartmentRequest[]
+  apartmentInspections ApartmentInspection[]
 
   @@unique([workspaceId, label])
   @@index([workspaceId])
@@ -589,6 +695,8 @@ model EstateUnit {
   estate          Estate?          @relation(fields: [estateId], references: [id], onDelete: SetNull)
   estateResidents EstateResident[]
   estateRequests  EstateRequest[]
+  charges         EstateCharge[]
+  estateInspections EstateInspection[]
 
   @@unique([workspaceId, estateId, label])
   @@index([workspaceId])
@@ -610,6 +718,7 @@ model EstateResident {
   workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   unit           EstateUnit?     @relation(fields: [unitId], references: [id], onDelete: SetNull)
   estateRequests EstateRequest[]
+  charges        EstateCharge[]
 
   @@index([workspaceId])
   @@index([unitId])
@@ -623,6 +732,13 @@ model EstateRequest {
   title       String
   description String?
   photoUrl    String?
+  category    String?
+  assignedToUserId String?
+  assignedToName   String?
+  vendorName       String?
+  dueAt            DateTime?
+  resolvedAt       DateTime?
+  estimatedCost    Float?
   priority    RequestPriority @default(NORMAL)
   status      RequestStatus   @default(PENDING)
   createdAt   DateTime        @default(now())
@@ -637,6 +753,61 @@ model EstateRequest {
   @@index([unitId])
   @@index([residentId])
   @@index([workspaceId, status])
+  @@index([workspaceId, category])
+  @@index([workspaceId, assignedToUserId])
+  @@index([workspaceId, dueAt])
+}
+
+model EstateCharge {
+  id               String            @id @default(cuid())
+  workspaceId      String
+  estateId         String?
+  unitId           String?
+  residentId       String?
+  title            String
+  category         String?
+  notes            String?
+  amount           Float
+  currency         String            @default("GHS")
+  dueDate          DateTime
+  status           EstateChargeStatus @default(POSTED)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  workspace        Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  estate           Estate?           @relation(fields: [estateId], references: [id], onDelete: SetNull)
+  unit             EstateUnit?       @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  resident         EstateResident?   @relation(fields: [residentId], references: [id], onDelete: SetNull)
+  payments         EstateChargePayment[]
+
+  @@index([workspaceId])
+  @@index([estateId])
+  @@index([unitId])
+  @@index([residentId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, dueDate])
+  @@index([workspaceId, category])
+}
+
+model EstateChargePayment {
+  id          String      @id @default(cuid())
+  workspaceId String
+  chargeId    String
+  amount      Float
+  currency    String      @default("GHS")
+  paidAt      DateTime    @default(now())
+  method      String?
+  reference   String?
+  notes       String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  charge    EstateCharge @relation(fields: [chargeId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([chargeId])
+  @@index([workspaceId, paidAt])
 }
 
 model ApartmentRequestMessage {
@@ -689,6 +860,7 @@ model OfficeArea {
   workspace        Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   officeRequests   OfficeRequest[]
   officeWorkOrders OfficeWorkOrder[]
+  officeInspections OfficeInspection[]
 
   @@unique([workspaceId, name])
   @@index([workspaceId])
@@ -971,4 +1143,80 @@ model AdminAuditLog {
   @@index([adminUserId])
   @@index([action])
   @@index([createdAt])
+}
+
+// ── Visitor Management ─────────────────────────────────────────────────────────
+
+model Visitor {
+  id          String        @id @default(cuid())
+  workspaceId String
+
+  // Who invited them
+  invitedByUserId String?
+  invitedByName   String?
+
+  // Which unit/area they are visiting (apartment/estate or office)
+  unitId   String?
+  unitLabel String?
+  areaId   String?
+  areaName String?
+
+  // Visitor details
+  name    String
+  phone   String?
+  email   String?
+  purpose String?
+
+  // Unique token used to generate/validate QR code
+  qrToken String @unique @default(cuid())
+
+  status    VisitorStatus @default(EXPECTED)
+  validFrom DateTime?
+  validUntil DateTime?
+
+  checkedInAt  DateTime?
+  checkedOutAt DateTime?
+  checkedInByName  String?
+  checkedOutByName String?
+
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([qrToken])
+  @@index([workspaceId, status])
+  @@index([workspaceId, createdAt])
+}
+
+// ── Recurring Billing ──────────────────────────────────────────────────────────
+
+model RecurringCharge {
+  id          String             @id @default(cuid())
+  workspaceId String
+  estateId    String?
+
+  title       String
+  category    String?
+  amount      Float
+  currency    String             @default("GHS")
+  frequency   RecurringFrequency @default(MONTHLY)
+  dayOfMonth  Int?               // e.g. 1 = 1st of every month
+  notes       String?
+
+  isActive    Boolean            @default(true)
+  lastRunAt   DateTime?
+  nextRunAt   DateTime?
+
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([workspaceId, isActive])
+  @@index([nextRunAt])
 }

@@ -1,27 +1,15 @@
 import { Type } from 'class-transformer';
 import { RequestPriority, RequestStatus } from '@prisma/client';
-import { IsDateString, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, MaxLength, Min, ValidateIf } from 'class-validator';
+import { IsDateString, IsEnum, IsNumber, IsOptional, IsString, MaxLength, Min, ValidateIf } from 'class-validator';
 
-export class CreateRequestDto {
-  @IsString()
-  @IsNotEmpty()
-  unitId!: string;
+export class UpdateRequestDto {
+  @IsOptional()
+  @IsEnum(RequestStatus)
+  status?: RequestStatus;
 
   @IsOptional()
-  @IsString()
-  residentId?: string;
-
-  @IsString()
-  @IsNotEmpty()
-  title!: string;
-
-  @IsOptional()
-  @IsString()
-  description?: string;
-
-  @IsOptional()
-  @IsString()
-  photoUrl?: string;
+  @IsEnum(RequestPriority)
+  priority?: RequestPriority;
 
   @IsOptional()
   @IsString()
@@ -48,12 +36,4 @@ export class CreateRequestDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   estimatedCost?: number;
-
-  @IsOptional()
-  @IsEnum(RequestPriority)
-  priority?: RequestPriority;
-
-  @IsOptional()
-  @IsEnum(RequestStatus)
-  status?: RequestStatus;
 }

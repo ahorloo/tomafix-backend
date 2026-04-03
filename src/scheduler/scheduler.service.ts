@@ -215,6 +215,94 @@ export class SchedulerService {
     }
   }
 
+  // Every hour: process due recurring charges (estate billing)
+  @Cron(CronExpression.EVERY_HOUR)
+  async processRecurringCharges() {
+    this.logger.log('[Recurring Cron] Checking for due recurring charges...');
+    const now = new Date();
+
+    const dueSchedules = await this.prisma.recurringCharge.findMany({
+      where: {
+        isActive: true,
+        nextRunAt: { lte: now },
+      },
+    });
+
+    this.logger.log(`[Recurring Cron] Found ${dueSchedules.length} due schedules`);
+
+    for (const schedule of dueSchedules) {
+      try {
+        // Find all active residents for this workspace (and estate if specified)
+        const residents = await this.prisma.estateResident.findMany({
+          where: {
+            workspaceId: schedule.workspaceId,
+            status: 'ACTIVE',
+            unitId: { not: null },
+            ...(schedule.estateId
+              ? { unit: { estateId: schedule.estateId } }
+              : {}),
+          },
+          select: { id: true, unitId: true },
+        });
+
+        if (residents.length === 0) {
+          this.logger.log(`[Recurring Cron] No active residents for schedule ${schedule.id}`);
+        } else {
+          // Post a charge for each resident
+          const dueDate = new Date(now);
+          dueDate.setDate(dueDate.getDate() + 7); // due in 7 days
+
+          await this.prisma.estateCharge.createMany({
+            data: residents.map((r) => ({
+              workspaceId: schedule.workspaceId,
+              estateId: schedule.estateId ?? undefined,
+              unitId: r.unitId!,
+              residentId: r.id,
+              title: schedule.title,
+              category: schedule.category ?? undefined,
+              amount: schedule.amount,
+              currency: schedule.currency,
+              notes: schedule.notes ?? undefined,
+              dueDate,
+              status: 'POSTED' as const,
+            })),
+          });
+
+          this.logger.log(`[Recurring Cron] Posted ${residents.length} charges for schedule "${schedule.title}"`);
+        }
+
+        // Calculate next run date
+        const nextRun = new Date(now);
+        switch (schedule.frequency) {
+          case 'DAILY':
+            nextRun.setDate(nextRun.getDate() + 1);
+            break;
+          case 'WEEKLY':
+            nextRun.setDate(nextRun.getDate() + 7);
+            break;
+          case 'MONTHLY':
+            nextRun.setMonth(nextRun.getMonth() + 1);
+            if (schedule.dayOfMonth) nextRun.setDate(schedule.dayOfMonth);
+            break;
+          case 'QUARTERLY':
+            nextRun.setMonth(nextRun.getMonth() + 3);
+            if (schedule.dayOfMonth) nextRun.setDate(schedule.dayOfMonth);
+            break;
+          case 'YEARLY':
+            nextRun.setFullYear(nextRun.getFullYear() + 1);
+            break;
+        }
+
+        await this.prisma.recurringCharge.update({
+          where: { id: schedule.id },
+          data: { lastRunAt: now, nextRunAt: nextRun },
+        });
+      } catch (e: any) {
+        this.logger.error(`[Recurring Cron] Failed for schedule ${schedule.id}: ${e.message}`);
+      }
+    }
+  }
+
   // Every hour: check for overdue alerts and notify via Slack
   @Cron(CronExpression.EVERY_HOUR)
   async checkOverdueAlerts() {

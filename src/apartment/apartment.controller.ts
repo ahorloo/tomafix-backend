@@ -16,6 +16,10 @@ import { CreateUnitDto } from './dto/create-unit.dto';
 import { CreateResidentDto } from './dto/create-resident.dto';
 import { CreateRequestDto } from './dto/create-request.dto';
 import { CreateEstateDto } from './dto/create-estate.dto';
+import { UpdateRequestDto } from './dto/update-request.dto';
+import { CreateEstateChargeDto } from './dto/create-estate-charge.dto';
+import { RecordEstateChargePaymentDto } from './dto/record-estate-charge-payment.dto';
+import { UpdateEstateChargeDto } from './dto/update-estate-charge.dto';
 import { AuthGuard } from '../auth/auth.guard';
 import { WorkspaceAccessGuard } from '../auth/workspace-access.guard';
 import { WorkspaceRoles } from '../auth/workspace-roles.decorator';
@@ -151,8 +155,24 @@ export class ApartmentController {
     @Req() req: any,
     @Query('status') status?: string,
     @Query('estateId') estateId?: string,
+    @Query('category') category?: string,
+    @Query('assignedToUserId') assignedToUserId?: string,
+    @Query('overdue') overdue?: string,
   ) {
-    return this.apartment.listRequests(workspaceId, status, req.authUserId, estateId);
+    return this.apartment.listRequests(workspaceId, {
+      status,
+      estateId,
+      category,
+      assignedToUserId,
+      overdue,
+      actorUserId: req.authUserId,
+    });
+  }
+
+  @WorkspacePermission('requests:view')
+  @Get('requests/:requestId')
+  getRequest(@Param('workspaceId') workspaceId: string, @Param('requestId') requestId: string) {
+    return this.apartment.getRequest(workspaceId, requestId);
   }
 
   @WorkspacePermission('requests:create')
@@ -168,9 +188,9 @@ export class ApartmentController {
   updateRequest(
     @Param('workspaceId') workspaceId: string,
     @Param('requestId') requestId: string,
-    @Body() dto: { status?: 'PENDING' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED'; priority?: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT' },
+    @Body() dto: UpdateRequestDto,
   ) {
-    return this.apartment.updateRequest(workspaceId, requestId, dto as any);
+    return this.apartment.updateRequest(workspaceId, requestId, dto);
   }
 
   @WorkspacePermission('requests:view')
@@ -192,5 +212,107 @@ export class ApartmentController {
       senderName: dto.senderName,
       body: dto.body,
     });
+  }
+
+  // Estate finance
+  @WorkspacePermission('users:manage')
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
+  @Get('finance/summary')
+  financeSummary(
+    @Param('workspaceId') workspaceId: string,
+    @Query('estateId') estateId?: string,
+  ) {
+    return this.apartment.getFinanceSummary(workspaceId, estateId);
+  }
+
+  @WorkspacePermission('users:manage')
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
+  @Get('finance/charges')
+  listFinanceCharges(
+    @Param('workspaceId') workspaceId: string,
+    @Query('estateId') estateId?: string,
+    @Query('status') status?: string,
+  ) {
+    return this.apartment.listFinanceCharges(workspaceId, estateId, status);
+  }
+
+  @WorkspacePermission('users:manage')
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
+  @Post('finance/charges')
+  createFinanceCharge(@Param('workspaceId') workspaceId: string, @Body() dto: CreateEstateChargeDto) {
+    return this.apartment.createFinanceCharge(workspaceId, dto);
+  }
+
+  @WorkspacePermission('users:manage')
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
+  @Patch('finance/charges/:chargeId')
+  updateFinanceCharge(
+    @Param('workspaceId') workspaceId: string,
+    @Param('chargeId') chargeId: string,
+    @Body() dto: UpdateEstateChargeDto,
+  ) {
+    return this.apartment.updateFinanceCharge(workspaceId, chargeId, dto);
+  }
+
+  @WorkspacePermission('users:manage')
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
+  @Get('finance/payments')
+  listFinancePayments(
+    @Param('workspaceId') workspaceId: string,
+    @Query('estateId') estateId?: string,
+  ) {
+    return this.apartment.listFinancePayments(workspaceId, estateId);
+  }
+
+  @WorkspacePermission('users:manage')
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
+  @Post('finance/payments')
+  recordFinancePayment(
+    @Param('workspaceId') workspaceId: string,
+    @Body() dto: RecordEstateChargePaymentDto,
+  ) {
+    return this.apartment.recordFinancePayment(workspaceId, dto);
+  }
+
+  // Recurring charges (auto-billing schedules)
+  @WorkspacePermission('users:manage')
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
+  @Get('finance/recurring')
+  listRecurringCharges(
+    @Param('workspaceId') workspaceId: string,
+    @Query('estateId') estateId?: string,
+  ) {
+    return this.apartment.listRecurringCharges(workspaceId, estateId);
+  }
+
+  @WorkspacePermission('users:manage')
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
+  @Post('finance/recurring')
+  createRecurringCharge(
+    @Param('workspaceId') workspaceId: string,
+    @Body() dto: any,
+  ) {
+    return this.apartment.createRecurringCharge(workspaceId, dto);
+  }
+
+  @WorkspacePermission('users:manage')
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
+  @Patch('finance/recurring/:scheduleId')
+  updateRecurringCharge(
+    @Param('workspaceId') workspaceId: string,
+    @Param('scheduleId') scheduleId: string,
+    @Body() dto: any,
+  ) {
+    return this.apartment.updateRecurringCharge(workspaceId, scheduleId, dto);
+  }
+
+  @WorkspacePermission('users:manage')
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
+  @Delete('finance/recurring/:scheduleId')
+  deleteRecurringCharge(
+    @Param('workspaceId') workspaceId: string,
+    @Param('scheduleId') scheduleId: string,
+  ) {
+    return this.apartment.deleteRecurringCharge(workspaceId, scheduleId);
   }
 }

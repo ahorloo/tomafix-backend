@@ -26,9 +26,49 @@ function csvEscape(value: unknown) {
   return s;
 }
 
+function propertyRequestDeadline(request: {
+  createdAt: Date;
+  priority: RequestPriority;
+  dueAt?: Date | null;
+}) {
+  if (request.dueAt) return request.dueAt;
+  const slaHours: Record<RequestPriority, number> = {
+    [RequestPriority.LOW]: 72,
+    [RequestPriority.NORMAL]: 24,
+    [RequestPriority.HIGH]: 12,
+    [RequestPriority.URGENT]: 4,
+  };
+  return new Date(request.createdAt.getTime() + (slaHours[request.priority] ?? 24) * 3600000);
+}
+
+function isPropertyRequestOverdue(request: {
+  status: RequestStatus;
+  priority: RequestPriority;
+  createdAt: Date;
+  dueAt?: Date | null;
+}) {
+  if (request.status !== RequestStatus.PENDING && request.status !== RequestStatus.IN_PROGRESS) {
+    return false;
+  }
+  return Date.now() > propertyRequestDeadline(request).getTime();
+}
+
 @Injectable()
 export class ReportsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private async resolveEstateScope(workspaceId: string, estateId?: string) {
+    if (!estateId) return undefined;
+    const normalized = String(estateId || '').trim();
+    if (!normalized) return undefined;
+
+    const estate = await this.prisma.estate.findFirst({
+      where: { id: normalized, workspaceId },
+      select: { id: true },
+    });
+    if (!estate) throw new BadRequestException('estateId does not belong to this workspace');
+    return estate.id;
+  }
 
   private async assertReportsWorkspace(workspaceId: string) {
     const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
@@ -62,7 +102,7 @@ export class ReportsService {
     } as any);
   }
 
-  async summary(workspaceId: string, from?: string, to?: string) {
+  async summary(workspaceId: string, from?: string, to?: string, estateId?: string) {
     const ws = await this.assertReportsWorkspace(workspaceId);
     if (ws.templateType === TemplateType.OFFICE) {
       await this.assertFeature(workspaceId, 'advancedReports');
@@ -95,8 +135,8 @@ export class ReportsService {
           where: { ...baseWhere, priority: { in: [RequestPriority.URGENT, RequestPriority.HIGH] } },
         }),
         this.prisma.officeAsset.count({ where: { workspaceId } }),
-        this.prisma.inspection.count({ where: baseWhere as any }),
-        this.prisma.inspection.count({ where: { ...(baseWhere as any), status: 'COMPLETED' as any } }),
+        this.prisma.officeInspection.count({ where: baseWhere as any }),
+        this.prisma.officeInspection.count({ where: { ...(baseWhere as any), status: 'COMPLETED' as any } }),
         this.prisma.officeWorkOrder.count({
           where: { ...baseWhere, status: { in: ['OPEN', 'IN_PROGRESS'] as any } },
         }),
@@ -140,43 +180,114 @@ export class ReportsService {
     const baseWhere = { workspaceId, ...(createdAtFilter ? { createdAt: createdAtFilter } : {}) };
 
     const isEstate = ws.templateType === TemplateType.ESTATE;
+    const resolvedEstateId = isEstate ? await this.resolveEstateScope(workspaceId, estateId) : undefined;
+    const estateScopedRelation = resolvedEstateId ? { unit: { is: { estateId: resolvedEstateId } } } : {};
+    const requestWhere = isEstate
+      ? { ...baseWhere, ...estateScopedRelation }
+      : baseWhere;
+    const inspectionWhere = isEstate
+      ? { ...(baseWhere as any), ...(resolvedEstateId ? { estateId: resolvedEstateId } : {}) }
+      : (baseWhere as any);
 
-    const [totalRequests, openRequests, resolvedRequests, urgentRequests, totalResidents, totalInspections, completedInspections] = await Promise.all([
+    const [
+      totalRequests,
+      openRequests,
+      resolvedRequests,
+      urgentRequests,
+      totalResidents,
+      totalInspections,
+      completedInspections,
+      estatePropertiesCount,
+      estateUnitBuckets,
+      assignedRequests,
+    ] = await Promise.all([
       isEstate
-        ? this.prisma.estateRequest.count({ where: baseWhere })
-        : this.prisma.apartmentRequest.count({ where: baseWhere }),
+        ? this.prisma.estateRequest.count({ where: requestWhere as any })
+        : this.prisma.apartmentRequest.count({ where: requestWhere as any }),
       isEstate
-        ? this.prisma.estateRequest.count({ where: { ...baseWhere, status: { in: [RequestStatus.PENDING, RequestStatus.IN_PROGRESS] } } })
-        : this.prisma.apartmentRequest.count({ where: { ...baseWhere, status: { in: [RequestStatus.PENDING, RequestStatus.IN_PROGRESS] } } }),
+        ? this.prisma.estateRequest.count({
+            where: { ...(requestWhere as any), status: { in: [RequestStatus.PENDING, RequestStatus.IN_PROGRESS] } },
+          })
+        : this.prisma.apartmentRequest.count({
+            where: { ...(requestWhere as any), status: { in: [RequestStatus.PENDING, RequestStatus.IN_PROGRESS] } },
+          }),
       isEstate
-        ? this.prisma.estateRequest.count({ where: { ...baseWhere, status: { in: [RequestStatus.RESOLVED, RequestStatus.CLOSED] } } })
-        : this.prisma.apartmentRequest.count({ where: { ...baseWhere, status: { in: [RequestStatus.RESOLVED, RequestStatus.CLOSED] } } }),
+        ? this.prisma.estateRequest.count({
+            where: { ...(requestWhere as any), status: { in: [RequestStatus.RESOLVED, RequestStatus.CLOSED] } },
+          })
+        : this.prisma.apartmentRequest.count({
+            where: { ...(requestWhere as any), status: { in: [RequestStatus.RESOLVED, RequestStatus.CLOSED] } },
+          }),
       isEstate
-        ? this.prisma.estateRequest.count({ where: { ...baseWhere, priority: { in: [RequestPriority.URGENT, RequestPriority.HIGH] } } })
-        : this.prisma.apartmentRequest.count({ where: { ...baseWhere, priority: { in: [RequestPriority.URGENT, RequestPriority.HIGH] } } }),
+        ? this.prisma.estateRequest.count({
+            where: { ...(requestWhere as any), priority: { in: [RequestPriority.URGENT, RequestPriority.HIGH] } },
+          })
+        : this.prisma.apartmentRequest.count({
+            where: { ...(requestWhere as any), priority: { in: [RequestPriority.URGENT, RequestPriority.HIGH] } },
+          }),
       isEstate
-        ? this.prisma.estateResident.count({ where: { workspaceId } })
+        ? this.prisma.estateResident.count({
+            where: {
+              workspaceId,
+              ...(resolvedEstateId ? { unit: { is: { estateId: resolvedEstateId } } } : {}),
+            },
+          })
         : this.prisma.apartmentResident.count({ where: { workspaceId } }),
-      this.prisma.inspection.count({ where: baseWhere as any }),
-      this.prisma.inspection.count({ where: { ...(baseWhere as any), status: 'COMPLETED' as any } }),
+      isEstate
+        ? this.prisma.estateInspection.count({ where: inspectionWhere })
+        : this.prisma.apartmentInspection.count({ where: inspectionWhere }),
+      isEstate
+        ? this.prisma.estateInspection.count({ where: { ...inspectionWhere, status: 'COMPLETED' as any } })
+        : this.prisma.apartmentInspection.count({ where: { ...inspectionWhere, status: 'COMPLETED' as any } }),
+      isEstate
+        ? resolvedEstateId
+          ? Promise.resolve(1)
+          : this.prisma.estate.count({ where: { workspaceId } })
+        : Promise.resolve(0),
+      isEstate
+        ? this.prisma.estateUnit.groupBy({
+            by: ['status'],
+            where: { workspaceId, ...(resolvedEstateId ? { estateId: resolvedEstateId } : {}) },
+            _count: { _all: true },
+          })
+        : Promise.resolve([] as Array<{ status: string; _count: { _all: number } }>),
+      isEstate
+        ? this.prisma.estateRequest.count({
+            where: { ...(requestWhere as any), assignedToUserId: { not: null } },
+          })
+        : Promise.resolve(0),
     ]);
 
     const breaches = isEstate
       ? await this.prisma.estateRequest.findMany({
-          where: { workspaceId, status: { in: [RequestStatus.PENDING, RequestStatus.IN_PROGRESS] } },
-          select: { id: true, createdAt: true, priority: true },
+          where: { ...(requestWhere as any), status: { in: [RequestStatus.PENDING, RequestStatus.IN_PROGRESS] } },
+          select: { id: true, createdAt: true, priority: true, dueAt: true, status: true },
           orderBy: { createdAt: 'desc' },
           take: 500,
         })
       : await this.prisma.apartmentRequest.findMany({
-          where: { workspaceId, status: { in: [RequestStatus.PENDING, RequestStatus.IN_PROGRESS] } },
-          select: { id: true, createdAt: true, priority: true },
+          where: { ...(requestWhere as any), status: { in: [RequestStatus.PENDING, RequestStatus.IN_PROGRESS] } },
+          select: { id: true, createdAt: true, priority: true, status: true },
           orderBy: { createdAt: 'desc' },
           take: 500,
         });
 
-    const slaHours: Record<string, number> = { URGENT: 4, HIGH: 12, NORMAL: 24, LOW: 72 };
-    const breachedCount = breaches.filter((r) => Date.now() > r.createdAt.getTime() + (slaHours[r.priority] ?? 24) * 3600000).length;
+    const breachedCount = breaches.filter((r) => isPropertyRequestOverdue(r as any)).length;
+
+    const estateUnits = {
+      total: Array.isArray(estateUnitBuckets)
+        ? estateUnitBuckets.reduce((sum, row) => sum + row._count._all, 0)
+        : 0,
+      occupied: Array.isArray(estateUnitBuckets)
+        ? estateUnitBuckets.find((row) => row.status === 'OCCUPIED')?._count._all ?? 0
+        : 0,
+      vacant: Array.isArray(estateUnitBuckets)
+        ? estateUnitBuckets.find((row) => row.status === 'VACANT')?._count._all ?? 0
+        : 0,
+      maintenance: Array.isArray(estateUnitBuckets)
+        ? estateUnitBuckets.find((row) => row.status === 'MAINTENANCE')?._count._all ?? 0
+        : 0,
+    };
 
     return {
       requests: {
@@ -185,6 +296,7 @@ export class ReportsService {
         resolved: resolvedRequests,
         urgent: urgentRequests,
         slaBreaches: breachedCount,
+        ...(isEstate ? { overdue: breachedCount, assigned: assignedRequests } : {}),
       },
       residents: {
         total: totalResidents,
@@ -193,10 +305,18 @@ export class ReportsService {
         total: totalInspections,
         completed: completedInspections,
       },
+      ...(isEstate
+        ? {
+            properties: {
+              total: estatePropertiesCount,
+            },
+            units: estateUnits,
+          }
+        : {}),
     };
   }
 
-  async exportRequestsCsv(workspaceId: string) {
+  async exportRequestsCsv(workspaceId: string, estateId?: string) {
     const ws = await this.assertReportsWorkspace(workspaceId);
     if (ws.templateType === TemplateType.OFFICE) {
       await this.assertFeature(workspaceId, 'exports');
@@ -221,10 +341,17 @@ export class ReportsService {
       return lines.join('\n');
     }
     const isEstate = ws.templateType === TemplateType.ESTATE;
+    const resolvedEstateId = isEstate ? await this.resolveEstateScope(workspaceId, estateId) : undefined;
     const rows = isEstate
       ? await this.prisma.estateRequest.findMany({
-          where: { workspaceId },
-          include: { unit: { select: { label: true } }, resident: { select: { fullName: true } } },
+          where: {
+            workspaceId,
+            ...(resolvedEstateId ? { unit: { is: { estateId: resolvedEstateId } } } : {}),
+          },
+          include: {
+            unit: { select: { label: true, estate: { select: { name: true, code: true } } } },
+            resident: { select: { fullName: true } },
+          },
           orderBy: { createdAt: 'desc' },
         })
       : await this.prisma.apartmentRequest.findMany({
@@ -233,63 +360,152 @@ export class ReportsService {
           orderBy: { createdAt: 'desc' },
         });
 
-    const header = ['id', 'title', 'status', 'priority', 'unit', 'resident', 'createdAt'];
+    const header = isEstate
+      ? ['id', 'property', 'title', 'category', 'status', 'priority', 'unit', 'resident', 'assignedTo', 'vendor', 'dueAt', 'estimatedCost', 'createdAt']
+      : ['id', 'title', 'status', 'priority', 'unit', 'resident', 'createdAt'];
+    const lines = [header.join(',')];
+    rows.forEach((r) => {
+      if (isEstate) {
+        lines.push([
+          r.id,
+          (r as any).unit?.estate?.name || (r as any).unit?.estate?.code || '',
+          r.title,
+          (r as any).category || '',
+          r.status,
+          r.priority,
+          r.unit?.label || '',
+          r.resident?.fullName || '',
+          (r as any).assignedToName || '',
+          (r as any).vendorName || '',
+          (r as any).dueAt ? new Date((r as any).dueAt).toISOString() : '',
+          (r as any).estimatedCost ?? '',
+          r.createdAt.toISOString(),
+        ].map(csvEscape).join(','));
+        return;
+      }
+      lines.push([r.id, r.title, r.status, r.priority, r.unit?.label || '', r.resident?.fullName || '', r.createdAt.toISOString()].map(csvEscape).join(','));
+    });
+    return lines.join('\n');
+  }
+
+  async exportResidentsCsv(workspaceId: string, estateId?: string) {
+    const ws = await this.assertReportsWorkspace(workspaceId);
+    if (ws.templateType === TemplateType.OFFICE) {
+      throw new BadRequestException('Resident exports are not available for OFFICE workspaces');
+    }
+    const resolvedEstateId = ws.templateType === TemplateType.ESTATE
+      ? await this.resolveEstateScope(workspaceId, estateId)
+      : undefined;
+    const rows = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateResident.findMany({
+          where: {
+            workspaceId,
+            ...(resolvedEstateId ? { unit: { is: { estateId: resolvedEstateId } } } : {}),
+          },
+          include: { unit: { select: { label: true, estate: { select: { name: true } } } } },
+          orderBy: { createdAt: 'desc' },
+        })
+      : await this.prisma.apartmentResident.findMany({ where: { workspaceId }, include: { unit: { select: { label: true } } }, orderBy: { createdAt: 'desc' } });
+    const header = ws.templateType === TemplateType.ESTATE
+      ? ['id', 'property', 'fullName', 'email', 'phone', 'role', 'status', 'unit', 'createdAt']
+      : ['id', 'fullName', 'email', 'phone', 'role', 'status', 'unit', 'createdAt'];
+    const lines = [header.join(',')];
+    rows.forEach((r) => {
+      if (ws.templateType === TemplateType.ESTATE) {
+        lines.push([r.id, (r as any).unit?.estate?.name || '', r.fullName, r.email || '', r.phone || '', r.role, r.status, r.unit?.label || '', r.createdAt.toISOString()].map(csvEscape).join(','));
+        return;
+      }
+      lines.push([r.id, r.fullName, r.email || '', r.phone || '', r.role, r.status, r.unit?.label || '', r.createdAt.toISOString()].map(csvEscape).join(','));
+    });
+    return lines.join('\n');
+  }
+
+  async exportInspectionsCsv(workspaceId: string, estateId?: string) {
+    const ws = await this.assertReportsWorkspace(workspaceId);
+    if (ws.templateType === TemplateType.OFFICE) {
+      await this.assertFeature(workspaceId, 'exports');
+    }
+    const resolvedEstateId = ws.templateType === TemplateType.ESTATE
+      ? await this.resolveEstateScope(workspaceId, estateId)
+      : undefined;
+    const rows = ws.templateType === TemplateType.OFFICE
+      ? await this.prisma.officeInspection.findMany({
+          where: { workspaceId },
+          include: { area: { select: { id: true, name: true } } },
+          orderBy: { createdAt: 'desc' },
+        })
+      : ws.templateType === TemplateType.ESTATE
+        ? await this.prisma.estateInspection.findMany({
+            where: { workspaceId, ...(resolvedEstateId ? { estateId: resolvedEstateId } : {}) },
+            include: {
+              estate: { select: { id: true, name: true } },
+              unit: { select: { id: true, label: true } },
+            },
+            orderBy: { createdAt: 'desc' },
+          })
+        : await this.prisma.apartmentInspection.findMany({
+            where: { workspaceId },
+            include: {
+              unit: { select: { id: true, label: true } },
+            },
+            orderBy: { createdAt: 'desc' },
+          });
+    const header = ['id', 'title', 'status', 'scope', 'property', 'area', 'block', 'floor', 'unit', 'dueDate', 'result', 'createdAt'];
     const lines = [header.join(',')];
     rows.forEach((r) => {
       lines.push([
         r.id,
         r.title,
         r.status,
-        r.priority,
-        r.unit?.label || '',
-        r.resident?.fullName || '',
+        r.scope,
+        ws.templateType === TemplateType.ESTATE ? (r as any).estate?.name || (r as any).estateId || '' : '',
+        ws.templateType === TemplateType.OFFICE ? (r as any).area?.name || '' : '',
+        r.block || '',
+        r.floor || '',
+        (r as any).unit?.label || '',
+        r.dueDate.toISOString(),
+        r.result || '',
         r.createdAt.toISOString(),
       ].map(csvEscape).join(','));
     });
     return lines.join('\n');
   }
 
-  async exportResidentsCsv(workspaceId: string) {
-    const ws = await this.assertReportsWorkspace(workspaceId);
-    if (ws.templateType === TemplateType.OFFICE) {
-      throw new BadRequestException('Resident exports are not available for OFFICE workspaces');
-    }
-    const rows = ws.templateType === TemplateType.ESTATE
-      ? await this.prisma.estateResident.findMany({ where: { workspaceId }, include: { unit: { select: { label: true } } }, orderBy: { createdAt: 'desc' } })
-      : await this.prisma.apartmentResident.findMany({ where: { workspaceId }, include: { unit: { select: { label: true } } }, orderBy: { createdAt: 'desc' } });
-    const header = ['id', 'fullName', 'email', 'phone', 'role', 'status', 'unit', 'createdAt'];
-    const lines = [header.join(',')];
-    rows.forEach((r) => {
-      lines.push([r.id, r.fullName, r.email || '', r.phone || '', r.role, r.status, r.unit?.label || '', r.createdAt.toISOString()].map(csvEscape).join(','));
-    });
-    return lines.join('\n');
-  }
-
-  async exportInspectionsCsv(workspaceId: string) {
+  async exportNoticesCsv(workspaceId: string, estateId?: string) {
     const ws = await this.assertReportsWorkspace(workspaceId);
     if (ws.templateType === TemplateType.OFFICE) {
       await this.assertFeature(workspaceId, 'exports');
     }
-    const rows = await this.prisma.inspection.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' } });
-    const header = ['id', 'title', 'status', 'scope', 'block', 'floor', 'unit', 'dueDate', 'result', 'createdAt'];
-    const lines = [header.join(',')];
-    rows.forEach((r) => {
-      lines.push([r.id, r.title, r.status, r.scope, r.block || '', r.floor || '', '', r.dueDate.toISOString(), r.result || '', r.createdAt.toISOString()].map(csvEscape).join(','));
-    });
-    return lines.join('\n');
-  }
-
-  async exportNoticesCsv(workspaceId: string) {
-    const ws = await this.assertReportsWorkspace(workspaceId);
-    if (ws.templateType === TemplateType.OFFICE) {
-      await this.assertFeature(workspaceId, 'exports');
-    }
-    const rows = await this.prisma.notice.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' } });
-    const header = ['id', 'title', 'audience', 'seenCount', 'createdAt'];
+    const resolvedEstateId = ws.templateType === TemplateType.ESTATE
+      ? await this.resolveEstateScope(workspaceId, estateId)
+      : undefined;
+    const rows = ws.templateType === TemplateType.OFFICE
+      ? await this.prisma.officeNotice.findMany({
+          where: { workspaceId },
+          orderBy: { createdAt: 'desc' },
+        })
+      : ws.templateType === TemplateType.ESTATE
+        ? await this.prisma.estateNotice.findMany({
+            where: { workspaceId, ...(resolvedEstateId ? { estateId: resolvedEstateId } : {}) },
+            include: { estate: { select: { id: true, name: true } } },
+            orderBy: { createdAt: 'desc' },
+          })
+        : await this.prisma.apartmentNotice.findMany({
+            where: { workspaceId },
+            orderBy: { createdAt: 'desc' },
+          });
+    const header = ['id', 'property', 'title', 'audience', 'seenCount', 'createdAt'];
     const lines = [header.join(',')];
     rows.forEach((r) => {
       const seen = Array.isArray(r.seenBy) ? r.seenBy.length : 0;
-      lines.push([r.id, r.title, r.audience, seen, r.createdAt.toISOString()].map(csvEscape).join(','));
+      lines.push([
+        r.id,
+        ws.templateType === TemplateType.ESTATE ? (r as any).estate?.name || (r as any).estateId || '' : '',
+        r.title,
+        r.audience,
+        seen,
+        r.createdAt.toISOString(),
+      ].map(csvEscape).join(','));
     });
     return lines.join('\n');
   }

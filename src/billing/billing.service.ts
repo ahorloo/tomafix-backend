@@ -836,18 +836,24 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
 
     if (to === BillingStatus.PAST_DUE || to === BillingStatus.SUSPENDED) {
       try {
-        await this.prisma.notice.create({
-          data: {
-            workspaceId,
-            title: to === BillingStatus.PAST_DUE ? 'Billing past due' : 'Workspace suspended for billing',
-            body:
-              to === BillingStatus.PAST_DUE
-                ? 'Payment is overdue. Retry payment to avoid suspension.'
-                : 'Workspace access is limited due to unpaid billing. Reactivate after payment.',
-            audience: 'STAFF' as any,
-            seenBy: [],
-          },
-        });
+        const data = {
+          workspaceId,
+          title: to === BillingStatus.PAST_DUE ? 'Billing past due' : 'Workspace suspended for billing',
+          body:
+            to === BillingStatus.PAST_DUE
+              ? 'Payment is overdue. Retry payment to avoid suspension.'
+              : 'Workspace access is limited due to unpaid billing. Reactivate after payment.',
+          audience: 'STAFF' as any,
+          seenBy: [],
+        };
+
+        if (ws.templateType === TemplateType.ESTATE) {
+          await this.prisma.estateNotice.create({ data: { ...data, estateId: null } });
+        } else if (ws.templateType === TemplateType.OFFICE) {
+          await this.prisma.officeNotice.create({ data });
+        } else {
+          await this.prisma.apartmentNotice.create({ data });
+        }
       } catch {
         // notice module may not be enabled for all templates
       }

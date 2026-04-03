@@ -1,5 +1,6 @@
 import { Injectable, UnauthorizedException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { TemplateType } from '@prisma/client';
 import * as crypto from 'crypto';
 
 // Simple password hashing using Node's built-in crypto (no bcrypt dep needed)
@@ -33,6 +34,38 @@ function addDays(date: Date, days: number) {
 @Injectable()
 export class AdminService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private normalizeWorkspaceCounts(workspace: any) {
+    const counts = workspace?._count || {};
+    const requestCount =
+      workspace?.templateType === TemplateType.ESTATE
+        ? counts.estateRequests ?? 0
+        : workspace?.templateType === TemplateType.OFFICE
+          ? counts.officeRequests ?? 0
+          : counts.apartmentRequests ?? 0;
+    const noticeCount =
+      workspace?.templateType === TemplateType.ESTATE
+        ? counts.estateNotices ?? 0
+        : workspace?.templateType === TemplateType.OFFICE
+          ? counts.officeNotices ?? 0
+          : counts.apartmentNotices ?? 0;
+    const inspectionCount =
+      workspace?.templateType === TemplateType.ESTATE
+        ? counts.estateInspections ?? 0
+        : workspace?.templateType === TemplateType.OFFICE
+          ? counts.officeInspections ?? 0
+          : counts.apartmentInspections ?? 0;
+
+    return {
+      ...workspace,
+      _count: {
+        ...counts,
+        requests: requestCount,
+        notices: noticeCount,
+        inspections: inspectionCount,
+      },
+    };
+  }
 
   private buildDailySeries(rows: Array<{ createdAt: Date }>, days = 14) {
     const today = startOfDay(new Date());
@@ -473,14 +506,27 @@ export class AdminService {
           createdAt: true,
           updatedAt: true,
           owner: { select: { id: true, email: true, fullName: true, phone: true } },
-          _count: { select: { members: true, apartmentRequests: true } },
+          _count: {
+            select: {
+              members: true,
+              apartmentRequests: true,
+              estateRequests: true,
+              officeRequests: true,
+              apartmentNotices: true,
+              estateNotices: true,
+              officeNotices: true,
+              apartmentInspections: true,
+              estateInspections: true,
+              officeInspections: true,
+            },
+          },
           payments: { orderBy: { createdAt: 'desc' }, take: 1, select: { status: true, amountPesewas: true, createdAt: true } },
         },
       }),
       this.prisma.workspace.count({ where }),
     ]);
 
-    return { workspaces, total, page, limit };
+    return { workspaces: workspaces.map((workspace) => this.normalizeWorkspaceCounts(workspace)), total, page, limit };
   }
 
   async getWorkspace(id: string) {
@@ -502,11 +548,24 @@ export class AdminService {
           take: 20,
         },
         payments: { orderBy: { createdAt: 'desc' }, take: 10 },
-        _count: { select: { members: true, apartmentRequests: true, notices: true, inspections: true } },
+        _count: {
+          select: {
+            members: true,
+            apartmentRequests: true,
+            estateRequests: true,
+            officeRequests: true,
+            apartmentNotices: true,
+            estateNotices: true,
+            officeNotices: true,
+            apartmentInspections: true,
+            estateInspections: true,
+            officeInspections: true,
+          },
+        },
       },
     });
     if (!workspace) throw new NotFoundException('Workspace not found');
-    return workspace;
+    return this.normalizeWorkspaceCounts(workspace);
   }
 
   async activateWorkspace(id: string, adminId: string, adminEmail: string) {
