@@ -290,4 +290,51 @@ export class TenantService {
 
     return msg;
   }
+
+  async getMyBalance(workspaceId: string, userId: string) {
+    // Find the resident record linked to this user
+    const resident = await this.prisma.estateResident.findFirst({
+      where: { workspaceId, unit: { workspace: { members: { some: { userId } } } } },
+    });
+
+    if (!resident) {
+      return { totalBilled: 0, totalPaid: 0, totalOutstanding: 0, overdue: 0, charges: [] };
+    }
+
+    const charges = await this.prisma.estateCharge.findMany({
+      where: { workspaceId, residentId: resident.id },
+      include: { payments: { orderBy: { paidAt: 'desc' } } },
+      orderBy: { dueDate: 'desc' },
+    });
+
+    const enriched = charges.map((c) => {
+      const paid = c.payments.reduce((s, p) => s + p.amount, 0);
+      return {
+        id: c.id,
+        title: c.title,
+        category: c.category,
+        amount: c.amount,
+        currency: c.currency,
+        paid,
+        outstanding: Math.max(0, c.amount - paid),
+        dueDate: c.dueDate,
+        status: c.status,
+        payments: c.payments.map((p) => ({
+          id: p.id,
+          amount: p.amount,
+          currency: p.currency,
+          paidAt: p.paidAt,
+          method: p.method,
+          reference: p.reference,
+        })),
+      };
+    });
+
+    const totalBilled = enriched.reduce((s, c) => s + c.amount, 0);
+    const totalPaid = enriched.reduce((s, c) => s + c.paid, 0);
+    const totalOutstanding = enriched.reduce((s, c) => s + c.outstanding, 0);
+    const overdue = enriched.filter((c) => c.status === 'OVERDUE').reduce((s, c) => s + c.outstanding, 0);
+
+    return { residentId: resident.id, totalBilled, totalPaid, totalOutstanding, overdue, charges: enriched };
+  }
 }

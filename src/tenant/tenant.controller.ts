@@ -56,4 +56,10 @@ export class TenantController {
   ) {
     return this.tenant.addMyRequestMessage(workspaceId, req.authUserId, requestId, dto.body);
   }
+
+  @WorkspacePermission('dashboard:view')
+  @Get('my-balance')
+  getMyBalance(@Param('workspaceId') workspaceId: string, @Req() req: any) {
+    return this.tenant.getMyBalance(workspaceId, req.authUserId);
+  }
 }

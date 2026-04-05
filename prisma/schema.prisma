@@ -93,6 +93,13 @@ enum ResidentRole {
   MANAGER
 }
 
+enum WorkOrderStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
 enum ResidentStatus {
   ACTIVE
   INACTIVE
@@ -153,6 +160,13 @@ enum OfficeCommunityChannelKey {
   UPDATES
 }
 
+enum PropertyCommunityChannelKey {
+  GENERAL
+  MARKETPLACE
+  UPDATES
+  EMERGENCY
+}
+
 enum InspectionStatus {
   SCHEDULED
   IN_PROGRESS
@@ -171,6 +185,75 @@ enum EstateChargeStatus {
   PAID
   OVERDUE
   VOID
+}
+
+enum ParcelStatus {
+  RECEIVED
+  NOTIFIED
+  PICKED_UP
+  RETURNED
+}
+
+enum AmenityBookingStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  CANCELLED
+  COMPLETED
+}
+
+enum LeaseStatus {
+  DRAFT
+  ACTIVE
+  EXPIRING
+  EXPIRED
+  TERMINATED
+}
+
+enum UtilityType {
+  ELECTRICITY
+  WATER
+  GAS
+  WASTE
+  OTHER
+}
+
+enum UtilityMeterStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ViolationStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  ESCALATED
+  CLOSED
+}
+
+enum InspectionTemplateKind {
+  MOVE_IN
+  MOVE_OUT
+  ROUTINE
+  SAFETY
+  CUSTOM
+}
+
+enum EmergencyAlertStatus {
+  DRAFT
+  SENT
+}
+
+enum ReminderType {
+  PAYMENT_DUE_SOON
+  PAYMENT_OVERDUE
+  LEASE_EXPIRING
 }
 
 model Template {
@@ -223,8 +306,22 @@ model Workspace {
   estates                  Estate[]
   apartmentNotices         ApartmentNotice[]
   apartmentInspections     ApartmentInspection[]
+  apartmentHouseholdMembers ApartmentHouseholdMember[]
+  apartmentVehicles         ApartmentVehicle[]
+  apartmentParcels          ApartmentParcel[]
+  apartmentAmenities        ApartmentAmenity[]
+  apartmentAmenityBookings  ApartmentAmenityBooking[]
+  apartmentCommunityChannels ApartmentCommunityChannel[]
+  apartmentCommunityMessages ApartmentCommunityMessage[]
   estateNotices            EstateNotice[]
   estateInspections        EstateInspection[]
+  estateHouseholdMembers   EstateHouseholdMember[]
+  estateVehicles           EstateVehicle[]
+  estateParcels            EstateParcel[]
+  estateAmenities          EstateAmenity[]
+  estateAmenityBookings    EstateAmenityBooking[]
+  estateCommunityChannels  EstateCommunityChannel[]
+  estateCommunityMessages  EstateCommunityMessage[]
   staffBlockAssignments    StaffBlockAssignment[]
   apartmentUnits           ApartmentUnit[]
   apartmentResidents       ApartmentResident[]
@@ -248,9 +345,26 @@ model Workspace {
   officeCommunityChannels     OfficeCommunityChannel[]
   officeCommunityMessages     OfficeCommunityMessage[]
 
-  // Visitor management
-  visitors          Visitor[]
-  recurringCharges  RecurringCharge[]
+  // Template-specific operational modules
+  apartmentVisitors          ApartmentVisitor[]
+  estateVisitors             EstateVisitor[]
+  officeVisitors             OfficeVisitor[]
+  apartmentRecurringCharges  ApartmentRecurringCharge[]
+  estateRecurringCharges     EstateRecurringCharge[]
+  apartmentVendors           ApartmentVendor[]
+  estateVendors              EstateVendor[]
+  apartmentWorkOrders        ApartmentWorkOrder[]
+  estateWorkOrders           EstateWorkOrder[]
+  apartmentWorkOrderMessages ApartmentWorkOrderMessage[]
+  estateWorkOrderMessages    EstateWorkOrderMessage[]
+  estateLeases               EstateLease[]
+  estateUtilityMeters        EstateUtilityMeter[]
+  estateUtilityReadings      EstateUtilityReading[]
+  estateViolations           EstateViolation[]
+  estateApprovalRequests     EstateApprovalRequest[]
+  estateInspectionTemplates  EstateInspectionTemplate[]
+  estateEmergencyAlerts      EstateEmergencyAlert[]
+  estateReminderLogs         EstateReminderLog[]
 
   // Integrations
   slackWebhookUrl    String?
@@ -467,19 +581,34 @@ model AuditLog {
 }
 
 model Estate {
-  id          String   @id @default(cuid())
-  workspaceId String
-  name        String
-  code        String?
-  location    String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                 String    @id @default(cuid())
+  workspaceId        String
+  name               String
+  code               String?
+  location           String?
+  locationMapsUrl    String?
+  locationLatitude   Float?
+  locationLongitude  Float?
+  locationVerifiedAt DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   workspace         Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   estateUnits       EstateUnit[]
   estateNotices     EstateNotice[]
   estateInspections EstateInspection[]
   charges           EstateCharge[]
+  parcels           EstateParcel[]
+  amenities         EstateAmenity[]
+  amenityBookings   EstateAmenityBooking[]
+  recurringCharges  EstateRecurringCharge[]
+  workOrders        EstateWorkOrder[]
+  leases            EstateLease[]
+  utilityMeters     EstateUtilityMeter[]
+  violations        EstateViolation[]
+  approvals         EstateApprovalRequest[]
+  inspectionTemplates EstateInspectionTemplate[]
+  emergencyAlerts   EstateEmergencyAlert[]
 
   @@unique([workspaceId, name])
   @@unique([workspaceId, code])
@@ -569,20 +698,28 @@ model EstateInspection {
   workspaceId String
   estateId    String?
   unitId      String?
+  templateId  String?
+  inspectionType String?
   scope       InspectionScope  @default(UNIT)
   block       String?
   floor       String?
   title       String
   dueDate     DateTime
   checklist   Json?
+  checklistResults Json?
+  evidencePhotos  Json?
   status      InspectionStatus @default(SCHEDULED)
   result      String?
+  completedAt DateTime?
+  signedOffByName String?
+  signedOffAt DateTime?
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
   workspace Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   estate    Estate?     @relation(fields: [estateId], references: [id], onDelete: SetNull)
   unit      EstateUnit? @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  template  EstateInspectionTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId])
   @@index([estateId])
@@ -630,6 +767,8 @@ model ApartmentUnit {
   apartmentResidents ApartmentResident[]
   apartmentRequests  ApartmentRequest[]
   apartmentInspections ApartmentInspection[]
+  parcels            ApartmentParcel[]
+  amenityBookings    ApartmentAmenityBooking[]
 
   @@unique([workspaceId, label])
   @@index([workspaceId])
@@ -651,6 +790,10 @@ model ApartmentResident {
   workspace         Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   unit              ApartmentUnit?     @relation(fields: [unitId], references: [id], onDelete: SetNull)
   apartmentRequests ApartmentRequest[]
+  householdMembers  ApartmentHouseholdMember[]
+  vehicles          ApartmentVehicle[]
+  parcels           ApartmentParcel[]
+  amenityBookings   ApartmentAmenityBooking[]
 
   @@index([workspaceId])
   @@index([unitId])
@@ -697,6 +840,12 @@ model EstateUnit {
   estateRequests  EstateRequest[]
   charges         EstateCharge[]
   estateInspections EstateInspection[]
+  parcels         EstateParcel[]
+  amenityBookings EstateAmenityBooking[]
+  leases          EstateLease[]
+  utilityMeters   EstateUtilityMeter[]
+  violations      EstateViolation[]
+  approvals       EstateApprovalRequest[]
 
   @@unique([workspaceId, estateId, label])
   @@index([workspaceId])
@@ -719,6 +868,13 @@ model EstateResident {
   unit           EstateUnit?     @relation(fields: [unitId], references: [id], onDelete: SetNull)
   estateRequests EstateRequest[]
   charges        EstateCharge[]
+  householdMembers EstateHouseholdMember[]
+  vehicles         EstateVehicle[]
+  parcels          EstateParcel[]
+  amenityBookings  EstateAmenityBooking[]
+  leases           EstateLease[]
+  violations       EstateViolation[]
+  approvals        EstateApprovalRequest[]
 
   @@index([workspaceId])
   @@index([unitId])
@@ -771,6 +927,8 @@ model EstateCharge {
   currency         String            @default("GHS")
   dueDate          DateTime
   status           EstateChargeStatus @default(POSTED)
+  lastReminderType ReminderType?
+  lastReminderSentAt DateTime?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 
@@ -779,6 +937,8 @@ model EstateCharge {
   unit             EstateUnit?       @relation(fields: [unitId], references: [id], onDelete: SetNull)
   resident         EstateResident?   @relation(fields: [residentId], references: [id], onDelete: SetNull)
   payments         EstateChargePayment[]
+  utilityReadings  EstateUtilityReading[]
+  reminderLogs     EstateReminderLog[]
 
   @@index([workspaceId])
   @@index([estateId])
@@ -808,6 +968,629 @@ model EstateChargePayment {
   @@index([workspaceId])
   @@index([chargeId])
   @@index([workspaceId, paidAt])
+}
+
+model ApartmentHouseholdMember {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  residentId   String
+  fullName     String
+  relationship String?
+  phone        String?
+  email        String?
+  isPrimary    Boolean  @default(false)
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  workspace Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  resident  ApartmentResident @relation(fields: [residentId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([residentId])
+  @@index([workspaceId, residentId])
+}
+
+model EstateHouseholdMember {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  residentId   String
+  fullName     String
+  relationship String?
+  phone        String?
+  email        String?
+  isPrimary    Boolean  @default(false)
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  resident  EstateResident @relation(fields: [residentId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([residentId])
+  @@index([workspaceId, residentId])
+}
+
+model ApartmentVehicle {
+  id          String   @id @default(cuid())
+  workspaceId String
+  residentId  String
+  plateNumber String
+  make        String?
+  model       String?
+  color       String?
+  isPrimary   Boolean  @default(false)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  resident  ApartmentResident @relation(fields: [residentId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, plateNumber])
+  @@index([workspaceId])
+  @@index([residentId])
+  @@index([workspaceId, residentId])
+}
+
+model EstateVehicle {
+  id          String   @id @default(cuid())
+  workspaceId String
+  residentId  String
+  plateNumber String
+  make        String?
+  model       String?
+  color       String?
+  isPrimary   Boolean  @default(false)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  resident  EstateResident @relation(fields: [residentId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, plateNumber])
+  @@index([workspaceId])
+  @@index([residentId])
+  @@index([workspaceId, residentId])
+}
+
+model ApartmentParcel {
+  id             String       @id @default(cuid())
+  workspaceId    String
+  residentId     String?
+  unitId         String?
+  recipientName  String
+  courierName    String?
+  description    String?
+  trackingCode   String?
+  status         ParcelStatus @default(RECEIVED)
+  receivedAt     DateTime     @default(now())
+  notifiedAt     DateTime?
+  pickedUpAt     DateTime?
+  returnedAt     DateTime?
+  receivedByName String?
+  pickupByName   String?
+  notes          String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  workspace Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  resident  ApartmentResident? @relation(fields: [residentId], references: [id], onDelete: SetNull)
+  unit      ApartmentUnit?     @relation(fields: [unitId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([residentId])
+  @@index([unitId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, createdAt])
+}
+
+model EstateParcel {
+  id             String       @id @default(cuid())
+  workspaceId    String
+  estateId       String?
+  residentId     String?
+  unitId         String?
+  recipientName  String
+  courierName    String?
+  description    String?
+  trackingCode   String?
+  status         ParcelStatus @default(RECEIVED)
+  receivedAt     DateTime     @default(now())
+  notifiedAt     DateTime?
+  pickedUpAt     DateTime?
+  returnedAt     DateTime?
+  receivedByName String?
+  pickupByName   String?
+  notes          String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  estate    Estate?         @relation(fields: [estateId], references: [id], onDelete: SetNull)
+  resident  EstateResident? @relation(fields: [residentId], references: [id], onDelete: SetNull)
+  unit      EstateUnit?     @relation(fields: [unitId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([estateId])
+  @@index([residentId])
+  @@index([unitId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, createdAt])
+}
+
+model ApartmentAmenity {
+  id               String   @id @default(cuid())
+  workspaceId      String
+  name             String
+  description      String?
+  location         String?
+  capacity         Int?
+  feeAmount        Float?
+  requiresApproval Boolean  @default(true)
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  workspace Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  bookings  ApartmentAmenityBooking[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+  @@index([workspaceId, isActive])
+}
+
+model ApartmentAmenityBooking {
+  id               String                @id @default(cuid())
+  workspaceId      String
+  amenityId        String
+  residentId       String
+  unitId           String?
+  title            String?
+  notes            String?
+  startAt          DateTime
+  endAt            DateTime
+  status           AmenityBookingStatus @default(REQUESTED)
+  feeAmount        Float?
+  responseNote     String?
+  approvedByUserId String?
+  approvedByName   String?
+  approvedAt       DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  workspace Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  amenity   ApartmentAmenity  @relation(fields: [amenityId], references: [id], onDelete: Cascade)
+  resident  ApartmentResident @relation(fields: [residentId], references: [id], onDelete: Cascade)
+  unit      ApartmentUnit?    @relation(fields: [unitId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([amenityId])
+  @@index([residentId])
+  @@index([unitId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, startAt])
+  @@index([workspaceId, amenityId, startAt])
+}
+
+model EstateAmenity {
+  id               String   @id @default(cuid())
+  workspaceId      String
+  estateId         String?
+  name             String
+  description      String?
+  location         String?
+  capacity         Int?
+  feeAmount        Float?
+  requiresApproval Boolean  @default(true)
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  workspace Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  estate    Estate?               @relation(fields: [estateId], references: [id], onDelete: SetNull)
+  bookings  EstateAmenityBooking[]
+
+  @@unique([workspaceId, estateId, name])
+  @@index([workspaceId])
+  @@index([estateId])
+  @@index([workspaceId, isActive])
+}
+
+model EstateAmenityBooking {
+  id               String                @id @default(cuid())
+  workspaceId      String
+  estateId         String?
+  amenityId        String
+  residentId       String
+  unitId           String?
+  title            String?
+  notes            String?
+  startAt          DateTime
+  endAt            DateTime
+  status           AmenityBookingStatus @default(REQUESTED)
+  feeAmount        Float?
+  responseNote     String?
+  approvedByUserId String?
+  approvedByName   String?
+  approvedAt       DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  estate    Estate?        @relation(fields: [estateId], references: [id], onDelete: SetNull)
+  amenity   EstateAmenity  @relation(fields: [amenityId], references: [id], onDelete: Cascade)
+  resident  EstateResident @relation(fields: [residentId], references: [id], onDelete: Cascade)
+  unit      EstateUnit?    @relation(fields: [unitId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([estateId])
+  @@index([amenityId])
+  @@index([residentId])
+  @@index([unitId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, startAt])
+  @@index([workspaceId, amenityId, startAt])
+}
+
+model ApartmentVisitor {
+  id             String        @id @default(cuid())
+  workspaceId     String
+  invitedByUserId String?
+  invitedByName   String?
+  unitId          String?
+  unitLabel       String?
+  name            String
+  phone           String?
+  email           String?
+  purpose         String?
+  qrToken         String        @unique @default(cuid())
+  status          VisitorStatus @default(EXPECTED)
+  validFrom       DateTime?
+  validUntil      DateTime?
+  checkedInAt     DateTime?
+  checkedOutAt    DateTime?
+  checkedInByName String?
+  checkedOutByName String?
+  notes           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, createdAt])
+}
+
+model EstateVisitor {
+  id             String        @id @default(cuid())
+  workspaceId     String
+  invitedByUserId String?
+  invitedByName   String?
+  unitId          String?
+  unitLabel       String?
+  name            String
+  phone           String?
+  email           String?
+  purpose         String?
+  qrToken         String        @unique @default(cuid())
+  status          VisitorStatus @default(EXPECTED)
+  validFrom       DateTime?
+  validUntil      DateTime?
+  checkedInAt     DateTime?
+  checkedOutAt    DateTime?
+  checkedInByName String?
+  checkedOutByName String?
+  notes           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, createdAt])
+}
+
+model OfficeVisitor {
+  id             String        @id @default(cuid())
+  workspaceId     String
+  invitedByUserId String?
+  invitedByName   String?
+  areaId          String?
+  areaName        String?
+  name            String
+  phone           String?
+  email           String?
+  purpose         String?
+  qrToken         String        @unique @default(cuid())
+  status          VisitorStatus @default(EXPECTED)
+  validFrom       DateTime?
+  validUntil      DateTime?
+  checkedInAt     DateTime?
+  checkedOutAt    DateTime?
+  checkedInByName String?
+  checkedOutByName String?
+  notes           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, createdAt])
+}
+
+model ApartmentCommunityChannel {
+  id          String                     @id @default(cuid())
+  workspaceId String
+  key         PropertyCommunityChannelKey
+  name        String
+  description String?
+  createdAt   DateTime                   @default(now())
+  updatedAt   DateTime                   @updatedAt
+
+  workspace Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  messages  ApartmentCommunityMessage[]
+
+  @@unique([workspaceId, key])
+  @@index([workspaceId])
+}
+
+model ApartmentCommunityMessage {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  channelId    String
+  senderUserId String?
+  senderName   String
+  body         String
+  isPinned     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  workspace Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel   ApartmentCommunityChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([channelId])
+  @@index([workspaceId, channelId, createdAt])
+}
+
+model EstateCommunityChannel {
+  id          String                     @id @default(cuid())
+  workspaceId String
+  key         PropertyCommunityChannelKey
+  name        String
+  description String?
+  createdAt   DateTime                   @default(now())
+  updatedAt   DateTime                   @updatedAt
+
+  workspace Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  messages  EstateCommunityMessage[]
+
+  @@unique([workspaceId, key])
+  @@index([workspaceId])
+}
+
+model EstateCommunityMessage {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  channelId    String
+  senderUserId String?
+  senderName   String
+  body         String
+  isPinned     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  workspace Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel   EstateCommunityChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([channelId])
+  @@index([workspaceId, channelId, createdAt])
+}
+
+model ApartmentRecurringCharge {
+  id          String             @id @default(cuid())
+  workspaceId String
+  title       String
+  category    String?
+  amount      Float
+  currency    String             @default("GHS")
+  frequency   RecurringFrequency @default(MONTHLY)
+  dayOfMonth  Int?
+  notes       String?
+  isActive    Boolean            @default(true)
+  lastRunAt   DateTime?
+  nextRunAt   DateTime?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([workspaceId, isActive])
+  @@index([nextRunAt])
+}
+
+model EstateRecurringCharge {
+  id          String             @id @default(cuid())
+  workspaceId String
+  estateId    String?
+  title       String
+  category    String?
+  amount      Float
+  currency    String             @default("GHS")
+  frequency   RecurringFrequency @default(MONTHLY)
+  dayOfMonth  Int?
+  notes       String?
+  isActive    Boolean            @default(true)
+  lastRunAt   DateTime?
+  nextRunAt   DateTime?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  estate    Estate?   @relation(fields: [estateId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([estateId])
+  @@index([workspaceId, isActive])
+  @@index([nextRunAt])
+}
+
+model ApartmentVendor {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  category    String?
+  phone       String?
+  email       String?
+  address     String?
+  notes       String?
+  isActive    Boolean  @default(true)
+  rating      Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace   Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workOrders  ApartmentWorkOrder[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, isActive])
+  @@index([workspaceId, category])
+}
+
+model EstateVendor {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  category    String?
+  phone       String?
+  email       String?
+  address     String?
+  notes       String?
+  isActive    Boolean  @default(true)
+  rating      Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace   Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workOrders  EstateWorkOrder[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, isActive])
+  @@index([workspaceId, category])
+}
+
+model ApartmentWorkOrder {
+  id               String          @id @default(cuid())
+  workspaceId      String
+  unitId           String?
+  unitLabel        String?
+  residentId       String?
+  vendorId         String?
+  assignedToUserId String?
+  assignedToName   String?
+  title            String
+  description      String?
+  category         String?
+  priority         RequestPriority @default(NORMAL)
+  status           WorkOrderStatus @default(OPEN)
+  estimatedCost    Float?
+  actualCost       Float?
+  slaDeadline      DateTime?
+  completedAt      DateTime?
+  completionNote   String?
+  proofPhotoUrl    String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  workspace Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  vendor    ApartmentVendor?        @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  messages  ApartmentWorkOrderMessage[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, unitId])
+  @@index([workspaceId, vendorId])
+  @@index([workspaceId, assignedToUserId])
+}
+
+model ApartmentWorkOrderMessage {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  workOrderId  String
+  senderUserId String?
+  senderName   String
+  body         String
+  createdAt    DateTime @default(now())
+
+  workspace Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workOrder ApartmentWorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([workOrderId])
+  @@index([workOrderId, createdAt])
+}
+
+model EstateWorkOrder {
+  id               String          @id @default(cuid())
+  workspaceId      String
+  estateId         String?
+  unitId           String?
+  unitLabel        String?
+  residentId       String?
+  vendorId         String?
+  assignedToUserId String?
+  assignedToName   String?
+  title            String
+  description      String?
+  category         String?
+  priority         RequestPriority @default(NORMAL)
+  status           WorkOrderStatus @default(OPEN)
+  estimatedCost    Float?
+  actualCost       Float?
+  slaDeadline      DateTime?
+  completedAt      DateTime?
+  completionNote   String?
+  proofPhotoUrl    String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  workspace Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  estate    Estate?              @relation(fields: [estateId], references: [id], onDelete: SetNull)
+  vendor    EstateVendor?        @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  messages  EstateWorkOrderMessage[]
+
+  @@index([workspaceId])
+  @@index([estateId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, unitId])
+  @@index([workspaceId, vendorId])
+  @@index([workspaceId, assignedToUserId])
+}
+
+model EstateWorkOrderMessage {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  workOrderId  String
+  senderUserId String?
+  senderName   String
+  body         String
+  createdAt    DateTime @default(now())
+
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workOrder EstateWorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([workOrderId])
+  @@index([workOrderId, createdAt])
 }
 
 model ApartmentRequestMessage {
@@ -1147,76 +1930,222 @@ model AdminAuditLog {
 
 // ── Visitor Management ─────────────────────────────────────────────────────────
 
-model Visitor {
-  id          String        @id @default(cuid())
-  workspaceId String
+model EstateLease {
+  id                String      @id @default(cuid())
+  workspaceId       String
+  estateId          String?
+  unitId            String
+  residentId        String?
+  leaseHolderName   String
+  startDate         DateTime
+  endDate           DateTime
+  monthlyRent       Float?
+  securityDeposit   Float?
+  renewalNoticeDays Int         @default(30)
+  status            LeaseStatus @default(DRAFT)
+  agreementUrl      String?
+  notes             String?
+  moveInDate        DateTime?
+  moveOutDate       DateTime?
+  expiryReminderSentAt DateTime?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
 
-  // Who invited them
-  invitedByUserId String?
-  invitedByName   String?
-
-  // Which unit/area they are visiting (apartment/estate or office)
-  unitId   String?
-  unitLabel String?
-  areaId   String?
-  areaName String?
-
-  // Visitor details
-  name    String
-  phone   String?
-  email   String?
-  purpose String?
-
-  // Unique token used to generate/validate QR code
-  qrToken String @unique @default(cuid())
-
-  status    VisitorStatus @default(EXPECTED)
-  validFrom DateTime?
-  validUntil DateTime?
-
-  checkedInAt  DateTime?
-  checkedOutAt DateTime?
-  checkedInByName  String?
-  checkedOutByName String?
-
-  notes String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  estate    Estate?         @relation(fields: [estateId], references: [id], onDelete: SetNull)
+  unit      EstateUnit      @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  resident  EstateResident? @relation(fields: [residentId], references: [id], onDelete: SetNull)
+  reminderLogs EstateReminderLog[]
 
   @@index([workspaceId])
-  @@index([qrToken])
+  @@index([estateId])
+  @@index([unitId])
+  @@index([residentId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, endDate])
+}
+
+model EstateUtilityMeter {
+  id             String             @id @default(cuid())
+  workspaceId    String
+  estateId       String?
+  unitId         String
+  type           UtilityType
+  label          String
+  meterNumber    String?
+  status         UtilityMeterStatus @default(ACTIVE)
+  unitRate       Float?
+  fixedCharge    Float?
+  lastReadingValue Float?
+  lastReadingAt  DateTime?
+  notes          String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  workspace Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  estate    Estate?               @relation(fields: [estateId], references: [id], onDelete: SetNull)
+  unit      EstateUnit            @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  readings  EstateUtilityReading[]
+
+  @@index([workspaceId])
+  @@index([estateId])
+  @@index([unitId])
+  @@index([workspaceId, type])
+  @@index([workspaceId, status])
+}
+
+model EstateUtilityReading {
+  id            String      @id @default(cuid())
+  workspaceId   String
+  meterId       String
+  chargeId      String?
+  readingDate   DateTime
+  readingValue  Float
+  previousValue Float?
+  consumption   Float?
+  unitRate      Float?
+  fixedCharge   Float?
+  billedAmount  Float?
+  notes         String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  workspace Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  meter     EstateUtilityMeter @relation(fields: [meterId], references: [id], onDelete: Cascade)
+  charge    EstateCharge?      @relation(fields: [chargeId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([meterId])
+  @@index([chargeId])
+  @@index([workspaceId, readingDate])
+}
+
+model EstateViolation {
+  id             String          @id @default(cuid())
+  workspaceId    String
+  estateId       String?
+  unitId         String?
+  residentId     String?
+  category       String?
+  title          String
+  description    String?
+  severity       String?
+  status         ViolationStatus @default(OPEN)
+  dueDate        DateTime?
+  resolvedAt     DateTime?
+  fineAmount     Float?
+  evidencePhotos Json?
+  resolutionNote String?
+  createdByName  String?
+  closedByName   String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  estate    Estate?         @relation(fields: [estateId], references: [id], onDelete: SetNull)
+  unit      EstateUnit?     @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  resident  EstateResident? @relation(fields: [residentId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([estateId])
+  @@index([unitId])
+  @@index([residentId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, dueDate])
+}
+
+model EstateApprovalRequest {
+  id               String         @id @default(cuid())
+  workspaceId      String
+  estateId         String?
+  unitId           String?
+  residentId       String?
+  type             String
+  title            String
+  description      String?
+  attachmentUrls   Json?
+  requestedStartAt DateTime?
+  requestedEndAt   DateTime?
+  status           ApprovalStatus @default(PENDING)
+  submittedAt      DateTime       @default(now())
+  reviewedAt       DateTime?
+  reviewedByName   String?
+  decisionNote     String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  estate    Estate?         @relation(fields: [estateId], references: [id], onDelete: SetNull)
+  unit      EstateUnit?     @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  resident  EstateResident? @relation(fields: [residentId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([estateId])
+  @@index([unitId])
+  @@index([residentId])
+  @@index([workspaceId, status])
+}
+
+model EstateInspectionTemplate {
+  id          String                 @id @default(cuid())
+  workspaceId String
+  estateId    String?
+  name        String
+  kind        InspectionTemplateKind @default(CUSTOM)
+  description String?
+  checklist   Json
+  isActive    Boolean                @default(true)
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+
+  workspace    Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  estate       Estate?           @relation(fields: [estateId], references: [id], onDelete: SetNull)
+  inspections  EstateInspection[]
+
+  @@index([workspaceId])
+  @@index([estateId])
+  @@index([workspaceId, isActive])
+}
+
+model EstateEmergencyAlert {
+  id          String               @id @default(cuid())
+  workspaceId String
+  estateId    String?
+  title       String
+  body        String
+  audience    NoticeAudience       @default(ALL)
+  channels    Json?
+  status      EmergencyAlertStatus @default(DRAFT)
+  sentAt      DateTime?
+  sentByName  String?
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  estate    Estate?   @relation(fields: [estateId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([estateId])
   @@index([workspaceId, status])
   @@index([workspaceId, createdAt])
 }
 
-// ── Recurring Billing ──────────────────────────────────────────────────────────
+model EstateReminderLog {
+  id             String       @id @default(cuid())
+  workspaceId     String
+  chargeId        String?
+  leaseId         String?
+  type            ReminderType
+  recipientEmail  String
+  recipientPhone  String?
+  sentAt          DateTime    @default(now())
 
-model RecurringCharge {
-  id          String             @id @default(cuid())
-  workspaceId String
-  estateId    String?
-
-  title       String
-  category    String?
-  amount      Float
-  currency    String             @default("GHS")
-  frequency   RecurringFrequency @default(MONTHLY)
-  dayOfMonth  Int?               // e.g. 1 = 1st of every month
-  notes       String?
-
-  isActive    Boolean            @default(true)
-  lastRunAt   DateTime?
-  nextRunAt   DateTime?
-
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
-
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  charge    EstateCharge? @relation(fields: [chargeId], references: [id], onDelete: Cascade)
+  lease     EstateLease?  @relation(fields: [leaseId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId])
-  @@index([workspaceId, isActive])
-  @@index([nextRunAt])
+  @@index([chargeId])
+  @@index([leaseId])
+  @@index([workspaceId, type, sentAt])
 }

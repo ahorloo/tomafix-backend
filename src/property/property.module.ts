@@ -1,7 +1,7 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
-import { VisitorsController } from './visitors.controller';
-import { VisitorsService } from './visitors.service';
+import { PropertyController } from './property.controller';
+import { PropertyService } from './property.service';
 import { EntitlementsGuard } from '../billing/guards';
 import { BillingModule } from '../billing/billing.module';
 import { AuthModule } from '../auth/auth.module';
@@ -12,12 +12,12 @@ import { SmsModule } from '../sms/sms.module';
 
 @Module({
   imports: [PrismaModule, BillingModule, AuthModule, MailModule, SmsModule],
-  controllers: [VisitorsController],
-  providers: [VisitorsService, EntitlementsGuard, AuthGuard, WorkspaceAccessGuard],
-  exports: [VisitorsService],
+  controllers: [PropertyController],
+  providers: [PropertyService, EntitlementsGuard, AuthGuard, WorkspaceAccessGuard],
+  exports: [PropertyService],
 })
-export class VisitorsModule implements NestModule {
+export class PropertyModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(EntitlementsGuard).forRoutes(VisitorsController);
+    consumer.apply(EntitlementsGuard).forRoutes(PropertyController);
   }
 }

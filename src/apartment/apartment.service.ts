@@ -33,6 +33,18 @@ type ListPropertyRequestsOpts = {
   overdue?: string;
 };
 
+type EstateLocationSnapshot = {
+  location: string | null;
+  locationMapsUrl: string | null;
+  locationLatitude: number | null;
+  locationLongitude: number | null;
+  locationVerifiedAt: Date | null;
+};
+
+function isGoogleMapsUrl(url: string): boolean {
+  return /^https?:\/\/.+/i.test(url) && /(google\.|maps\.app\.goo\.gl|goo\.gl)/i.test(url);
+}
+
 @Injectable()
 export class ApartmentService {
   private readonly logger = new Logger(ApartmentService.name);
@@ -262,13 +274,15 @@ export class ApartmentService {
     await this.assertEstateWorkspace(workspaceId);
     await this.assertPropertiesPlanLimit(workspaceId);
 
+    const locationData = this.normalizeEstateLocationInput(dto);
+
     try {
       return await this.prisma.estate.create({
         data: {
           workspaceId,
           name: dto.name.trim(),
           code: dto.code?.trim() || null,
-          location: dto.location?.trim() || null,
+          ...locationData,
         },
       });
     } catch (e: unknown) {
@@ -282,8 +296,27 @@ export class ApartmentService {
   async updateEstate(workspaceId: string, estateId: string, dto: Partial<CreateEstateDto>) {
     await this.assertEstateWorkspace(workspaceId);
 
-    const estate = await this.prisma.estate.findFirst({ where: { id: estateId, workspaceId } });
+    const estate = await this.prisma.estate.findFirst({
+      where: { id: estateId, workspaceId },
+      select: {
+        id: true,
+        name: true,
+        location: true,
+        locationMapsUrl: true,
+        locationLatitude: true,
+        locationLongitude: true,
+        locationVerifiedAt: true,
+      },
+    });
     if (!estate) throw new NotFoundException('Estate not found');
+
+    const locationData = this.normalizeEstateLocationInput(dto, {
+      location: estate.location,
+      locationMapsUrl: estate.locationMapsUrl,
+      locationLatitude: estate.locationLatitude,
+      locationLongitude: estate.locationLongitude,
+      locationVerifiedAt: estate.locationVerifiedAt,
+    });
 
     try {
       return await this.prisma.estate.update({
@@ -291,7 +324,7 @@ export class ApartmentService {
         data: {
           name: dto.name !== undefined ? dto.name.trim() : undefined,
           code: dto.code !== undefined ? (dto.code?.trim() || null) : undefined,
-          location: dto.location !== undefined ? (dto.location?.trim() || null) : undefined,
+          ...locationData,
         },
       });
     } catch (e: unknown) {
@@ -315,6 +348,81 @@ export class ApartmentService {
 
     await this.prisma.estate.delete({ where: { id: estateId } });
     return { ok: true };
+  }
+
+  private normalizeEstateLocationInput(dto: Partial<CreateEstateDto>, current?: EstateLocationSnapshot) {
+    const locationTouched = dto.location !== undefined;
+    const verificationTouched =
+      dto.locationMapsUrl !== undefined || dto.locationLatitude !== undefined || dto.locationLongitude !== undefined;
+
+    if (!locationTouched && !verificationTouched) {
+      return {
+        location: current?.location ?? null,
+        locationMapsUrl: current?.locationMapsUrl ?? null,
+        locationLatitude: current?.locationLatitude ?? null,
+        locationLongitude: current?.locationLongitude ?? null,
+        locationVerifiedAt: current?.locationVerifiedAt ?? null,
+      };
+    }
+
+    const trimmedLocation = dto.location !== undefined ? dto.location?.trim() || null : current?.location ?? null;
+    const locationChanged = locationTouched && trimmedLocation !== (current?.location ?? null);
+
+    if (!trimmedLocation) {
+      return {
+        location: null,
+        locationMapsUrl: null,
+        locationLatitude: null,
+        locationLongitude: null,
+        locationVerifiedAt: null,
+      };
+    }
+
+    let locationMapsUrl = verificationTouched ? dto.locationMapsUrl?.trim() || null : current?.locationMapsUrl ?? null;
+    let locationLatitude =
+      verificationTouched ? dto.locationLatitude ?? null : current?.locationLatitude ?? null;
+    let locationLongitude =
+      verificationTouched ? dto.locationLongitude ?? null : current?.locationLongitude ?? null;
+
+    if (locationChanged && !verificationTouched) {
+      locationMapsUrl = null;
+      locationLatitude = null;
+      locationLongitude = null;
+    }
+
+    const hasVerification =
+      locationMapsUrl !== null || locationLatitude !== null || locationLongitude !== null;
+
+    if (!hasVerification) {
+      return {
+        location: trimmedLocation,
+        locationMapsUrl: null,
+        locationLatitude: null,
+        locationLongitude: null,
+        locationVerifiedAt: null,
+      };
+    }
+
+    if (!locationMapsUrl || locationLatitude == null || locationLongitude == null) {
+      throw new BadRequestException('Verified location needs a Google Maps URL and coordinates');
+    }
+    if (!isGoogleMapsUrl(locationMapsUrl)) {
+      throw new BadRequestException('Location map must be a valid Google Maps URL');
+    }
+    if (!Number.isFinite(locationLatitude) || locationLatitude < -90 || locationLatitude > 90) {
+      throw new BadRequestException('Location latitude is invalid');
+    }
+    if (!Number.isFinite(locationLongitude) || locationLongitude < -180 || locationLongitude > 180) {
+      throw new BadRequestException('Location longitude is invalid');
+    }
+
+    return {
+      location: trimmedLocation,
+      locationMapsUrl,
+      locationLatitude,
+      locationLongitude,
+      locationVerifiedAt: new Date(),
+    };
   }
 
   private async getStaffBlockScope(workspaceId: string, actorUserId?: string) {
@@ -1631,7 +1739,8 @@ export class ApartmentService {
   // ── Recurring Charges ──────────────────────────────────────────────────────
 
   async listRecurringCharges(workspaceId: string, estateId?: string) {
-    return this.prisma.recurringCharge.findMany({
+    await this.assertEstateWorkspace(workspaceId);
+    return this.prisma.estateRecurringCharge.findMany({
       where: {
         workspaceId,
         ...(estateId ? { estateId } : {}),
@@ -1641,6 +1750,7 @@ export class ApartmentService {
   }
 
   async createRecurringCharge(workspaceId: string, dto: any) {
+    await this.assertEstateWorkspace(workspaceId);
     const { title, category, amount, currency, frequency, dayOfMonth, estateId, notes } = dto;
 
     const now = new Date();
@@ -1660,7 +1770,7 @@ export class ApartmentService {
       nextRun.setHours(0, 0, 0, 0);
     }
 
-    return this.prisma.recurringCharge.create({
+    return this.prisma.estateRecurringCharge.create({
       data: {
         workspaceId,
         estateId: estateId || null,
@@ -1678,9 +1788,10 @@ export class ApartmentService {
   }
 
   async updateRecurringCharge(workspaceId: string, scheduleId: string, dto: any) {
-    const existing = await this.prisma.recurringCharge.findFirst({ where: { id: scheduleId, workspaceId } });
+    await this.assertEstateWorkspace(workspaceId);
+    const existing = await this.prisma.estateRecurringCharge.findFirst({ where: { id: scheduleId, workspaceId } });
     if (!existing) throw new Error('Recurring charge not found');
-    return this.prisma.recurringCharge.update({
+    return this.prisma.estateRecurringCharge.update({
       where: { id: scheduleId },
       data: {
         title: dto.title !== undefined ? dto.title : existing.title,
@@ -1693,9 +1804,10 @@ export class ApartmentService {
   }
 
   async deleteRecurringCharge(workspaceId: string, scheduleId: string) {
-    const existing = await this.prisma.recurringCharge.findFirst({ where: { id: scheduleId, workspaceId } });
+    await this.assertEstateWorkspace(workspaceId);
+    const existing = await this.prisma.estateRecurringCharge.findFirst({ where: { id: scheduleId, workspaceId } });
     if (!existing) throw new Error('Recurring charge not found');
-    await this.prisma.recurringCharge.delete({ where: { id: scheduleId } });
+    await this.prisma.estateRecurringCharge.delete({ where: { id: scheduleId } });
     return { success: true };
   }
 }

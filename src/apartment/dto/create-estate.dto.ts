@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 
 export class CreateEstateDto {
   @IsString()
@@ -12,4 +12,16 @@ export class CreateEstateDto {
   @IsOptional()
   @IsString()
   location?: string;
+
+  @IsOptional()
+  @IsString()
+  locationMapsUrl?: string | null;
+
+  @IsOptional()
+  @IsNumber()
+  locationLatitude?: number | null;
+
+  @IsOptional()
+  @IsNumber()
+  locationLongitude?: number | null;
 }

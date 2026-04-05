@@ -1,15 +1,46 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateVisitorDto } from './dto/create-visitor.dto';
 import { ScanVisitorDto } from './dto/scan-visitor.dto';
-import { VisitorStatus } from '@prisma/client';
+import { TemplateType, VisitorStatus } from '@prisma/client';
+import { MailService } from '../mail/mail.service';
+import { SmsService } from '../sms/sms.service';
 
 @Injectable()
 export class VisitorsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(VisitorsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mail: MailService,
+    private readonly sms: SmsService,
+  ) {}
+
+  private async getWorkspace(workspaceId: string) {
+    const workspace = await this.prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { id: true, name: true, templateType: true },
+    });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+    return workspace;
+  }
+
+  private visitorDelegate(templateType: TemplateType) {
+    switch (templateType) {
+      case TemplateType.ESTATE:
+        return this.prisma.estateVisitor as any;
+      case TemplateType.OFFICE:
+        return this.prisma.officeVisitor as any;
+      default:
+        return this.prisma.apartmentVisitor as any;
+    }
+  }
 
   async createVisitor(workspaceId: string, userId: string, userName: string, dto: CreateVisitorDto) {
-    const visitor = await this.prisma.visitor.create({
+    const workspace = await this.getWorkspace(workspaceId);
+    const repo = this.visitorDelegate(workspace.templateType);
+
+    const visitor = await repo.create({
       data: {
         workspaceId,
         invitedByUserId: userId,
@@ -18,24 +49,49 @@ export class VisitorsService {
         phone: dto.phone,
         email: dto.email,
         purpose: dto.purpose,
-        unitId: dto.unitId,
-        unitLabel: dto.unitLabel,
-        areaId: dto.areaId,
-        areaName: dto.areaName,
+        unitId: workspace.templateType === TemplateType.OFFICE ? null : dto.unitId,
+        unitLabel: workspace.templateType === TemplateType.OFFICE ? null : dto.unitLabel,
+        areaId: workspace.templateType === TemplateType.OFFICE ? dto.areaId : null,
+        areaName: workspace.templateType === TemplateType.OFFICE ? dto.areaName : null,
         validFrom: dto.validFrom ? new Date(dto.validFrom) : null,
         validUntil: dto.validUntil ? new Date(dto.validUntil) : null,
         notes: dto.notes,
         status: VisitorStatus.EXPECTED,
       },
     });
+
+    const workspaceName = workspace?.name || 'TomaFix property';
+
+    if (visitor.email) {
+      this.mail.sendVisitorInviteEmail({
+        to: visitor.email,
+        visitorName: visitor.name,
+        workspaceName,
+        unitLabel: visitor.unitLabel,
+        validUntil: visitor.validUntil,
+      }).catch((e) => this.logger.warn(`Visitor invite email failed: ${e?.message || e}`));
+    }
+
+    if (String(process.env.NOTIFICATION_SMS_ENABLED || 'false').toLowerCase() === 'true' && visitor.phone) {
+      this.sms.sendVisitorInviteSms({
+        to: visitor.phone,
+        visitorName: visitor.name,
+        workspaceName,
+        unitLabel: visitor.unitLabel,
+        validUntil: visitor.validUntil,
+      }).catch((e) => this.logger.warn(`Visitor invite SMS failed: ${e?.message || e}`));
+    }
+
     return visitor;
   }
 
   async listVisitors(workspaceId: string, status?: string, limit = 50) {
+    const workspace = await this.getWorkspace(workspaceId);
+    const repo = this.visitorDelegate(workspace.templateType);
     const where: any = { workspaceId };
     if (status) where.status = status as VisitorStatus;
 
-    const visitors = await this.prisma.visitor.findMany({
+    const visitors = await repo.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       take: limit,
@@ -44,7 +100,9 @@ export class VisitorsService {
   }
 
   async getVisitor(workspaceId: string, visitorId: string) {
-    const visitor = await this.prisma.visitor.findFirst({
+    const workspace = await this.getWorkspace(workspaceId);
+    const repo = this.visitorDelegate(workspace.templateType);
+    const visitor = await repo.findFirst({
       where: { id: visitorId, workspaceId },
     });
     if (!visitor) throw new NotFoundException('Visitor not found');
@@ -52,13 +110,17 @@ export class VisitorsService {
   }
 
   async getVisitorByToken(qrToken: string) {
-    const visitor = await this.prisma.visitor.findUnique({ where: { qrToken } });
-    if (!visitor) throw new NotFoundException('Invalid or expired visitor pass');
-    return visitor;
+    for (const repo of [this.prisma.apartmentVisitor as any, this.prisma.estateVisitor as any, this.prisma.officeVisitor as any]) {
+      const visitor = await repo.findUnique({ where: { qrToken } });
+      if (visitor) return visitor;
+    }
+    throw new NotFoundException('Invalid or expired visitor pass');
   }
 
   async scanVisitor(workspaceId: string, scannerName: string, dto: ScanVisitorDto) {
-    const visitor = await this.prisma.visitor.findUnique({ where: { qrToken: dto.qrToken } });
+    const workspace = await this.getWorkspace(workspaceId);
+    const repo = this.visitorDelegate(workspace.templateType);
+    const visitor = await repo.findUnique({ where: { qrToken: dto.qrToken } });
     if (!visitor) throw new NotFoundException('Invalid QR code — no visitor found');
     if (visitor.workspaceId !== workspaceId) throw new BadRequestException('This visitor pass is not for this property');
     if (visitor.status === VisitorStatus.CANCELLED) throw new BadRequestException('This visitor pass has been cancelled');
@@ -70,13 +132,13 @@ export class VisitorsService {
       throw new BadRequestException(`This pass is only valid from ${visitor.validFrom.toLocaleDateString()}`);
     }
     if (visitor.validUntil && now > visitor.validUntil) {
-      await this.prisma.visitor.update({ where: { id: visitor.id }, data: { status: VisitorStatus.EXPIRED } });
+      await repo.update({ where: { id: visitor.id }, data: { status: VisitorStatus.EXPIRED } });
       throw new BadRequestException('This visitor pass has expired');
     }
 
     if (visitor.status === VisitorStatus.EXPECTED) {
       // Check in
-      const updated = await this.prisma.visitor.update({
+      const updated = await repo.update({
         where: { id: visitor.id },
         data: {
           status: VisitorStatus.CHECKED_IN,
@@ -89,7 +151,7 @@ export class VisitorsService {
 
     if (visitor.status === VisitorStatus.CHECKED_IN) {
       // Check out
-      const updated = await this.prisma.visitor.update({
+      const updated = await repo.update({
         where: { id: visitor.id },
         data: {
           status: VisitorStatus.CHECKED_OUT,
@@ -108,23 +170,27 @@ export class VisitorsService {
   }
 
   async cancelVisitor(workspaceId: string, visitorId: string) {
-    const visitor = await this.prisma.visitor.findFirst({ where: { id: visitorId, workspaceId } });
+    const workspace = await this.getWorkspace(workspaceId);
+    const repo = this.visitorDelegate(workspace.templateType);
+    const visitor = await repo.findFirst({ where: { id: visitorId, workspaceId } });
     if (!visitor) throw new NotFoundException('Visitor not found');
     if (visitor.status === VisitorStatus.CHECKED_IN) {
       throw new BadRequestException('Cannot cancel a visitor who is currently checked in');
     }
-    return this.prisma.visitor.update({
+    return repo.update({
       where: { id: visitorId },
       data: { status: VisitorStatus.CANCELLED },
     });
   }
 
   async getStats(workspaceId: string) {
+    const workspace = await this.getWorkspace(workspaceId);
+    const repo = this.visitorDelegate(workspace.templateType);
     const [expected, checkedIn, checkedOut, todayTotal] = await Promise.all([
-      this.prisma.visitor.count({ where: { workspaceId, status: VisitorStatus.EXPECTED } }),
-      this.prisma.visitor.count({ where: { workspaceId, status: VisitorStatus.CHECKED_IN } }),
-      this.prisma.visitor.count({ where: { workspaceId, status: VisitorStatus.CHECKED_OUT } }),
-      this.prisma.visitor.count({
+      repo.count({ where: { workspaceId, status: VisitorStatus.EXPECTED } }),
+      repo.count({ where: { workspaceId, status: VisitorStatus.CHECKED_IN } }),
+      repo.count({ where: { workspaceId, status: VisitorStatus.CHECKED_OUT } }),
+      repo.count({
         where: {
           workspaceId,
           createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },

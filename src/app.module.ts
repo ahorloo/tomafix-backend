@@ -16,6 +16,9 @@ import { HealthModule } from './health/health.module';
 import { MarketplaceModule } from './marketplace/marketplace.module';
 import { AdminModule } from './admin/admin.module';
 import { VisitorsModule } from './visitors/visitors.module';
+import { PropertyModule } from './property/property.module';
+import { SmsModule } from './sms/sms.module';
+import { EstateOpsModule } from './estate-ops/estate-ops.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -38,6 +41,9 @@ import { AppService } from './app.service';
     MarketplaceModule,
     AdminModule,
     VisitorsModule,
+    PropertyModule,
+    SmsModule,
+    EstateOpsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

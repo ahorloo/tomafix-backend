@@ -187,6 +187,80 @@ export class MailService {
     );
   }
 
+  sendVisitorInviteEmail(args: {
+    to: string;
+    visitorName: string;
+    workspaceName: string;
+    unitLabel?: string | null;
+    validUntil?: Date | null;
+  }) {
+    const validity = args.validUntil ? `<p><strong>Valid until:</strong> ${args.validUntil.toLocaleString()}</p>` : '';
+    const unit = args.unitLabel ? `<p><strong>Unit / destination:</strong> ${args.unitLabel}</p>` : '';
+    return this.send(
+      args.to,
+      `Your TomaFix visitor pass for ${args.workspaceName}`,
+      `<p>Hi ${args.visitorName},</p>
+       <p>You have been invited to visit <strong>${args.workspaceName}</strong>.</p>
+       ${unit}
+       ${validity}
+       <p>Please present your visitor pass or QR code at the gate when you arrive.</p>
+       <p>— TomaFix</p>`,
+    );
+  }
+
+  sendAmenityBookingEmail(args: {
+    to: string;
+    residentName: string;
+    amenityName: string;
+    status: string;
+    startAt: Date;
+    workspaceName: string;
+    workspaceId: string;
+  }) {
+    const statusText: Record<string, string> = {
+      REQUESTED: 'was received and is awaiting approval',
+      APPROVED: 'has been approved',
+      REJECTED: 'was not approved',
+      CANCELLED: 'has been cancelled',
+      COMPLETED: 'has been marked completed',
+    };
+    return this.send(
+      args.to,
+      `Facility booking update: ${args.amenityName}`,
+      `<p>Hi ${args.residentName},</p>
+       <p>Your booking for <strong>${args.amenityName}</strong> at <strong>${args.workspaceName}</strong> ${statusText[args.status] || `is now ${args.status.toLowerCase()}` }.</p>
+       <p><strong>Booking time:</strong> ${args.startAt.toLocaleString()}</p>
+       <p><a href="${this.getAppUrl()}/app/${args.workspaceId}/facilities">Open Facilities</a></p>
+       <p>— TomaFix</p>`,
+    );
+  }
+
+  sendParcelEmail(args: {
+    to: string;
+    recipientName: string;
+    workspaceName: string;
+    status: string;
+    trackingCode?: string | null;
+    workspaceId: string;
+  }) {
+    const statusText: Record<string, string> = {
+      RECEIVED: 'A parcel has been received for you',
+      NOTIFIED: 'Your parcel is ready for pickup',
+      PICKED_UP: 'Your parcel has been marked as picked up',
+      RETURNED: 'Your parcel has been marked as returned',
+    };
+    const tracking = args.trackingCode ? `<p><strong>Reference:</strong> ${args.trackingCode}</p>` : '';
+    return this.send(
+      args.to,
+      `Parcel update from ${args.workspaceName}`,
+      `<p>Hi ${args.recipientName},</p>
+       <p>${statusText[args.status] || 'There is a parcel update for you'} at <strong>${args.workspaceName}</strong>.</p>
+       ${tracking}
+       <p><a href="${this.getAppUrl()}/app/${args.workspaceId}/parcels">Open Deliveries</a></p>
+       <p>— TomaFix</p>`,
+    );
+  }
+
   sendSlackNotification(webhookUrl: string, text: string) {
     // Inline fetch for Slack
     return fetch(webhookUrl, {

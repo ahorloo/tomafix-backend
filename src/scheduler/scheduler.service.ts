@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { ReminderType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
+import { SmsService } from '../sms/sms.service';
 
 @Injectable()
 export class SchedulerService {
@@ -10,7 +12,24 @@ export class SchedulerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mail: MailService,
+    private readonly sms: SmsService,
   ) {}
+
+  private smsEnabled() {
+    return String(process.env.NOTIFICATION_SMS_ENABLED || 'false').toLowerCase() === 'true';
+  }
+
+  private async sendEstateReminder(target: { email?: string | null; phone?: string | null }, subject: string, html: string, smsText?: string) {
+    const email = String(target.email || '').trim().toLowerCase();
+    if (email) {
+      await this.mail.send(email, subject, html);
+    }
+    if (smsText && this.smsEnabled() && target.phone) {
+      await this.sms.send({ to: target.phone, message: smsText, tag: 'reminder' }).catch((e) => {
+        this.logger.warn(`[Reminder Cron] SMS failed: ${e?.message || e}`);
+      });
+    }
+  }
 
   // Every hour: process due preventive maintenance
   @Cron(CronExpression.EVERY_HOUR)
@@ -221,7 +240,7 @@ export class SchedulerService {
     this.logger.log('[Recurring Cron] Checking for due recurring charges...');
     const now = new Date();
 
-    const dueSchedules = await this.prisma.recurringCharge.findMany({
+    const dueSchedules = await this.prisma.estateRecurringCharge.findMany({
       where: {
         isActive: true,
         nextRunAt: { lte: now },
@@ -293,12 +312,140 @@ export class SchedulerService {
             break;
         }
 
-        await this.prisma.recurringCharge.update({
+        await this.prisma.estateRecurringCharge.update({
           where: { id: schedule.id },
           data: { lastRunAt: now, nextRunAt: nextRun },
         });
       } catch (e: any) {
         this.logger.error(`[Recurring Cron] Failed for schedule ${schedule.id}: ${e.message}`);
+      }
+    }
+  }
+
+  @Cron(CronExpression.EVERY_HOUR)
+  async sendEstateChargeAndLeaseReminders() {
+    const now = new Date();
+    const dueSoonCutoff = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+    const leaseCutoff = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    const dueSoonCharges = await this.prisma.estateCharge.findMany({
+      where: {
+        status: { in: ['POSTED', 'PARTIALLY_PAID'] },
+        dueDate: { gte: now, lte: dueSoonCutoff },
+        reminderLogs: { none: { type: ReminderType.PAYMENT_DUE_SOON } },
+      },
+      include: {
+        resident: { select: { id: true, fullName: true, email: true, phone: true } },
+        unit: { select: { label: true } },
+        estate: { select: { name: true } },
+      },
+      take: 200,
+    });
+
+    for (const charge of dueSoonCharges) {
+      if (!charge.resident?.email && !charge.resident?.phone) continue;
+      try {
+        await this.sendEstateReminder(
+          charge.resident,
+          `Payment due soon • ${charge.title}`,
+          `<p>Hello ${charge.resident?.fullName || 'resident'},</p><p>Your charge <strong>${charge.title}</strong> for ${charge.unit?.label || 'your unit'} is due on ${new Date(charge.dueDate).toLocaleDateString()}.</p><p>Outstanding amount: <strong>GHS ${Number(charge.amount).toFixed(2)}</strong>.</p>`,
+          `TomaFix: ${charge.title} for ${charge.unit?.label || 'your unit'} is due on ${new Date(charge.dueDate).toLocaleDateString()}.`,
+        );
+        await this.prisma.estateReminderLog.create({
+          data: {
+            workspaceId: charge.workspaceId,
+            chargeId: charge.id,
+            type: ReminderType.PAYMENT_DUE_SOON,
+            recipientEmail: charge.resident?.email || charge.resident?.phone || 'n/a',
+            recipientPhone: charge.resident?.phone || null,
+          },
+        });
+        await this.prisma.estateCharge.update({
+          where: { id: charge.id },
+          data: { lastReminderType: ReminderType.PAYMENT_DUE_SOON, lastReminderSentAt: now },
+        });
+      } catch (e: any) {
+        this.logger.error(`[Reminder Cron] Failed due-soon reminder for charge ${charge.id}: ${e.message}`);
+      }
+    }
+
+    const overdueCharges = await this.prisma.estateCharge.findMany({
+      where: {
+        status: { in: ['POSTED', 'PARTIALLY_PAID', 'OVERDUE'] },
+        dueDate: { lt: now },
+        reminderLogs: { none: { type: ReminderType.PAYMENT_OVERDUE } },
+      },
+      include: {
+        resident: { select: { id: true, fullName: true, email: true, phone: true } },
+        unit: { select: { label: true } },
+      },
+      take: 200,
+    });
+
+    for (const charge of overdueCharges) {
+      if (!charge.resident?.email && !charge.resident?.phone) continue;
+      try {
+        await this.sendEstateReminder(
+          charge.resident,
+          `Overdue payment • ${charge.title}`,
+          `<p>Hello ${charge.resident?.fullName || 'resident'},</p><p>Your charge <strong>${charge.title}</strong> for ${charge.unit?.label || 'your unit'} is now overdue.</p><p>Please settle the outstanding amount as soon as possible.</p>`,
+          `TomaFix: ${charge.title} for ${charge.unit?.label || 'your unit'} is overdue. Please make payment as soon as possible.`,
+        );
+        await this.prisma.estateReminderLog.create({
+          data: {
+            workspaceId: charge.workspaceId,
+            chargeId: charge.id,
+            type: ReminderType.PAYMENT_OVERDUE,
+            recipientEmail: charge.resident?.email || charge.resident?.phone || 'n/a',
+            recipientPhone: charge.resident?.phone || null,
+          },
+        });
+        await this.prisma.estateCharge.update({
+          where: { id: charge.id },
+          data: { status: 'OVERDUE', lastReminderType: ReminderType.PAYMENT_OVERDUE, lastReminderSentAt: now },
+        });
+      } catch (e: any) {
+        this.logger.error(`[Reminder Cron] Failed overdue reminder for charge ${charge.id}: ${e.message}`);
+      }
+    }
+
+    const expiringLeases = await this.prisma.estateLease.findMany({
+      where: {
+        status: { in: ['ACTIVE', 'EXPIRING'] },
+        endDate: { gte: now, lte: leaseCutoff },
+        reminderLogs: { none: { type: ReminderType.LEASE_EXPIRING } },
+      },
+      include: {
+        resident: { select: { email: true, phone: true, fullName: true } },
+        unit: { select: { label: true } },
+      },
+      take: 200,
+    });
+
+    for (const lease of expiringLeases) {
+      if (!lease.resident?.email && !lease.resident?.phone) continue;
+      try {
+        await this.sendEstateReminder(
+          lease.resident,
+          `Lease expiry reminder • ${lease.unit.label}`,
+          `<p>Hello ${lease.resident?.fullName || lease.leaseHolderName},</p><p>Your lease for <strong>${lease.unit.label}</strong> is due to end on ${new Date(lease.endDate).toLocaleDateString()}.</p><p>Please contact estate management if a renewal is needed.</p>`,
+          `TomaFix: Your lease for ${lease.unit.label} ends on ${new Date(lease.endDate).toLocaleDateString()}. Please contact management if you want to renew.`,
+        );
+        await this.prisma.estateReminderLog.create({
+          data: {
+            workspaceId: lease.workspaceId,
+            leaseId: lease.id,
+            type: ReminderType.LEASE_EXPIRING,
+            recipientEmail: lease.resident?.email || lease.resident?.phone || 'n/a',
+            recipientPhone: lease.resident?.phone || null,
+          },
+        });
+        await this.prisma.estateLease.update({
+          where: { id: lease.id },
+          data: { status: 'EXPIRING', expiryReminderSentAt: now },
+        });
+      } catch (e: any) {
+        this.logger.error(`[Reminder Cron] Failed lease reminder for lease ${lease.id}: ${e.message}`);
       }
     }
   }
