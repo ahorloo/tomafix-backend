@@ -222,11 +222,13 @@ export class AuthService {
         ? MemberRole.TECHNICIAN
         : dto.role === MemberRole.MANAGER
           ? MemberRole.MANAGER
+          : dto.role === MemberRole.GUARD
+            ? MemberRole.GUARD
           : MemberRole.STAFF;
 
-    // Managers can only create Staff or Technician accounts, not other Managers.
+    // Managers can only create Staff, Guard, or Technician accounts, not other Managers.
     if (actorRole === MemberRole.MANAGER && requestedRole === MemberRole.MANAGER) {
-      throw new BadRequestException('Managers can only add Staff or Technician members.');
+      throw new BadRequestException('Managers can only add Staff, Guard, or Technician members.');
     }
 
     const user = await this.prisma.user.upsert({
@@ -269,11 +271,13 @@ export class AuthService {
     try {
       const appUrl = (process.env.APP_BASE_URL || process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/+$/, '');
       const roleLabel =
-        requestedRole === MemberRole.TECHNICIAN
-          ? 'Technician'
-          : requestedRole === MemberRole.MANAGER
-            ? 'Manager'
-            : 'Staff';
+        requestedRole === MemberRole.GUARD
+          ? 'Guard'
+          : requestedRole === MemberRole.TECHNICIAN
+            ? 'Technician'
+            : requestedRole === MemberRole.MANAGER
+              ? 'Manager'
+              : 'Staff';
       await this.sendEmailWithResend({
         to: email,
         subject: `You've been added as ${roleLabel.toLowerCase()} on TomaFix`,
@@ -333,14 +337,14 @@ export class AuthService {
     }
 
     if (actorRole === MemberRole.MANAGER) {
-      if (!(targetRole === MemberRole.STAFF || targetRole === MemberRole.TECHNICIAN)) {
-        throw new ForbiddenException('Managers can only remove or restore staff and technicians');
+      if (!(targetRole === MemberRole.STAFF || targetRole === MemberRole.GUARD || targetRole === MemberRole.TECHNICIAN)) {
+        throw new ForbiddenException('Managers can only remove or restore staff, guards, and technicians');
       }
       if (requestedRoleChange) {
-        throw new ForbiddenException('Managers cannot change roles. They can only remove or restore staff and technicians');
+        throw new ForbiddenException('Managers cannot change roles. They can only remove or restore staff, guards, and technicians');
       }
       if (!requestedStatusChange) {
-        throw new ForbiddenException('Managers can only remove or restore staff and technicians');
+        throw new ForbiddenException('Managers can only remove or restore staff, guards, and technicians');
       }
     }
 
@@ -471,8 +475,8 @@ export class AuthService {
       where: { workspaceId, userId: staffUserId, isActive: true },
     });
     if (!member) throw new BadRequestException('Staff member not found in workspace');
-    if (!(member.role === MemberRole.STAFF || member.role === MemberRole.MANAGER)) {
-      throw new BadRequestException('Only staff can be assigned to blocks');
+    if (!(member.role === MemberRole.STAFF || member.role === MemberRole.GUARD || member.role === MemberRole.MANAGER)) {
+      throw new BadRequestException('Only staff and guards can be assigned to blocks');
     }
 
     const normalized = Array.from(
@@ -727,6 +731,8 @@ export class AuthService {
         return 'Manager';
       case MemberRole.TECHNICIAN:
         return 'Technician';
+      case MemberRole.GUARD:
+        return 'Guard';
       case MemberRole.STAFF:
         return 'Staff';
       case MemberRole.RESIDENT:
