@@ -21,6 +21,18 @@ export class AdminController {
     return this.adminService.verifyAdminOtp(body.token, body.code);
   }
 
+  @Post('auth/password-reset/request')
+  @HttpCode(HttpStatus.OK)
+  requestPasswordReset(@Body() body: { email: string }) {
+    return this.adminService.requestPasswordReset(body.email);
+  }
+
+  @Post('auth/password-reset/confirm')
+  @HttpCode(HttpStatus.OK)
+  confirmPasswordReset(@Body() body: { token: string; password: string }) {
+    return this.adminService.resetAdminPassword(body.token, body.password);
+  }
+
   @Post('auth/logout')
   @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.OK)
@@ -112,6 +124,13 @@ export class AdminController {
   @AdminRoles('SUPER_ADMIN', 'OPS_ADMIN', 'BILLING_ADMIN')
   updateWorkspaceNotes(@Param('id') id: string, @Body() body: { notes: string }, @Req() req: any) {
     return this.adminService.updateWorkspaceNotes(id, req.adminUser.id, req.adminUser.email, body.notes ?? '');
+  }
+
+  @Patch('workspaces/:id/owner-phone')
+  @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'OPS_ADMIN', 'BILLING_ADMIN')
+  updateWorkspaceOwnerPhone(@Param('id') id: string, @Body() body: { phone: string }, @Req() req: any) {
+    return this.adminService.updateWorkspaceOwnerPhone(id, req.adminUser.id, req.adminUser.email, body.phone ?? '');
   }
 
   // ── Users ─────────────────────────────────────────────────────────────────

@@ -19,6 +19,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { getEntitlements, resolvePlanName } from '../billing/planConfig';
 import { cacheGet, cacheSet } from '../billing/cache';
 import { MailService } from '../mail/mail.service';
+import { assertWorkspaceTemplate } from '../shared/workspace-boundary';
 import { CreateAreaDto } from './dto/create-area.dto';
 import { CreateOfficeRequestDto } from './dto/create-request.dto';
 import { CreateWorkOrderDto } from './dto/create-work-order.dto';
@@ -68,12 +69,12 @@ export class OfficeService {
   ) {}
 
   private async assertOfficeWorkspace(workspaceId: string) {
-    const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
-    if (!ws) throw new NotFoundException('Workspace not found');
-    if (ws.templateType !== TemplateType.OFFICE) {
-      throw new BadRequestException('This endpoint is only available for OFFICE workspaces');
-    }
-    return ws;
+    return assertWorkspaceTemplate(
+      this.prisma,
+      workspaceId,
+      [TemplateType.OFFICE] as const,
+      'This endpoint is only available for OFFICE workspaces',
+    );
   }
 
   private async assertOfficeFeature(workspaceId: string, feature: FeatureKey, lockedMessage: string) {

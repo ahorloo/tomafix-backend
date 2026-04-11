@@ -18,6 +18,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { SmsService } from '../sms/sms.service';
+import { assertWorkspaceTemplate } from '../shared/workspace-boundary';
 
 type PropertyTemplate = Extract<TemplateType, 'APARTMENT' | 'ESTATE'>;
 
@@ -64,15 +65,12 @@ export class PropertyService {
   ) {}
 
   private async assertPropertyWorkspace(workspaceId: string) {
-    const workspace = await this.prisma.workspace.findUnique({
-      where: { id: workspaceId },
-      select: { id: true, name: true, templateType: true },
-    });
-    if (!workspace) throw new NotFoundException('Workspace not found');
-    if (workspace.templateType !== TemplateType.APARTMENT && workspace.templateType !== TemplateType.ESTATE) {
-      throw new BadRequestException('Property module is enabled only for apartment and estate workspaces');
-    }
-    return workspace as { id: string; name: string; templateType: PropertyTemplate };
+    return assertWorkspaceTemplate(
+      this.prisma,
+      workspaceId,
+      [TemplateType.APARTMENT, TemplateType.ESTATE] as const,
+      'Property module is enabled only for apartment and estate workspaces',
+    ) as Promise<{ id: string; name: string; templateType: PropertyTemplate; planName: string }>;
   }
 
   private isPropertyCommunityManager(role?: MemberRole | string | null) {

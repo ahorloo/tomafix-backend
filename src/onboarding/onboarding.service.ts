@@ -28,11 +28,12 @@ export class OnboardingService {
    */
   async createWorkspace(dto: CreateWorkspaceDto) {
     const email = dto.ownerEmail.trim().toLowerCase();
+    const phone = dto.ownerPhone?.trim() || null;
 
     const user = await this.prisma.user.upsert({
       where: { email },
-      update: { fullName: dto.ownerFullName },
-      create: { email, fullName: dto.ownerFullName },
+      update: { fullName: dto.ownerFullName, ...(phone ? { phone } : {}) },
+      create: { email, fullName: dto.ownerFullName, ...(phone ? { phone } : {}) },
     });
 
     const template = await this.prisma.template.upsert({
@@ -449,6 +450,7 @@ export class OnboardingService {
   async sendOwnerEmailOtp(workspaceId: string, email: string) {
     const wsId = (workspaceId ?? '').trim();
     const target = (email ?? '').trim().toLowerCase();
+    const nodeEnv = (process.env.NODE_ENV || '').toLowerCase();
 
     if (!wsId || !target) {
       throw new BadRequestException('workspaceId and email are required');
@@ -561,13 +563,20 @@ export class OnboardingService {
       this.logger.warn(`[DEV OTP] ${target} -> ${code}`);
     }
 
-    await this.sendEmailWithResend({
-      to: target,
-      subject: 'Your TomaFix verification code',
-      html: this.otpEmailHtml(code),
-    });
+    try {
+      await this.sendEmailWithResend({
+        to: target,
+        subject: 'Your TomaFix verification code',
+        html: this.otpEmailHtml(code),
+      });
+    } catch (err) {
+      if (nodeEnv === 'production') throw err;
+      this.logger.warn(
+        `Owner OTP email failed in dev; returning code so onboarding stays usable. To: ${target}. Reason: ${(err as Error).message}`,
+      );
+    }
 
-    const isProd = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+    const isProd = nodeEnv === 'production';
     const shouldExposeDevOtp = !hasResend && !isProd;
 
     return {

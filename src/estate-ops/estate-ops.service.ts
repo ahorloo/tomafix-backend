@@ -16,6 +16,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { SmsService } from '../sms/sms.service';
+import { assertWorkspaceTemplate } from '../shared/workspace-boundary';
 
 @Injectable()
 export class EstateOpsService {
@@ -28,15 +29,7 @@ export class EstateOpsService {
   ) {}
 
   private async assertEstateWorkspace(workspaceId: string) {
-    const workspace = await this.prisma.workspace.findUnique({
-      where: { id: workspaceId },
-      select: { id: true, name: true, templateType: true },
-    });
-    if (!workspace) throw new NotFoundException('Workspace not found');
-    if (workspace.templateType !== TemplateType.ESTATE) {
-      throw new BadRequestException('This endpoint is available for estate workspaces only');
-    }
-    return workspace;
+    return assertWorkspaceTemplate(this.prisma, workspaceId, [TemplateType.ESTATE] as const, 'This endpoint is available for estate workspaces only');
   }
 
   private normalizeOptionalText(value: unknown) {

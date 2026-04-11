@@ -1,4 +1,4 @@
-import { IsEmail, IsEnum, IsNotEmpty, IsString, MaxLength } from 'class-validator';
+import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 import { TemplateType } from '@prisma/client';
 
 export class CreateWorkspaceDto {
@@ -14,6 +14,11 @@ export class CreateWorkspaceDto {
 
   @IsEmail()
   ownerEmail!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  ownerPhone?: string;
 
   @IsEnum(TemplateType)
   templateType!: TemplateType;

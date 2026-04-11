@@ -12,6 +12,10 @@ function generateToken(): string {
   return crypto.randomBytes(48).toString('hex');
 }
 
+function hashToken(value: string): string {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
 const VALID_ADMIN_ROLES = ['SUPER_ADMIN', 'OPS_ADMIN', 'BILLING_ADMIN', 'REVIEW_ADMIN', 'CONTENT_ADMIN'] as const;
 type ValidAdminRole = (typeof VALID_ADMIN_ROLES)[number];
 
@@ -34,6 +38,13 @@ function addDays(date: Date, days: number) {
 @Injectable()
 export class AdminService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private getAdminAppUrl() {
+    return (
+      process.env.ADMIN_APP_URL ||
+      (process.env.NODE_ENV === 'production' ? 'https://admin.tomafix.com' : 'http://localhost:5175')
+    );
+  }
 
   private normalizeWorkspaceCounts(workspace: any) {
     const counts = workspace?._count || {};
@@ -112,7 +123,81 @@ export class AdminService {
     // Send OTP email
     await this.sendAdminOtpEmail(admin.email, admin.fullName, code);
 
-    return { step: 'otp', token };
+    return {
+      step: 'otp',
+      token,
+      ...(process.env.NODE_ENV !== 'production' ? { devOtp: code } : {}),
+    };
+  }
+
+  async requestPasswordReset(email: string) {
+    const normalized = email.trim().toLowerCase();
+    const admin = await this.prisma.adminUser.findUnique({ where: { email: normalized } });
+
+    if (!admin || !admin.isActive) {
+      return {
+        ok: true,
+        ...(process.env.NODE_ENV !== 'production' ? { devResetToken: null } : {}),
+      };
+    }
+
+    await this.prisma.adminPasswordResetToken.deleteMany({
+      where: {
+        adminUserId: admin.id,
+        usedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+    });
+
+    const token = generateToken();
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    await this.prisma.adminPasswordResetToken.create({
+      data: {
+        adminUserId: admin.id,
+        tokenHash: hashToken(token),
+        expiresAt,
+      },
+    });
+
+    await this.sendAdminPasswordResetEmail(admin.email, admin.fullName, token);
+
+    return {
+      ok: true,
+      ...(process.env.NODE_ENV !== 'production' ? { devResetToken: token } : {}),
+    };
+  }
+
+  async resetAdminPassword(token: string, password: string) {
+    const tokenHash = hashToken(token.trim());
+    const resetToken = await this.prisma.adminPasswordResetToken.findUnique({
+      where: { tokenHash },
+      include: { admin: true },
+    });
+
+    if (!resetToken || resetToken.usedAt || resetToken.expiresAt < new Date()) {
+      throw new UnauthorizedException('Reset link is invalid or expired');
+    }
+
+    if (!resetToken.admin.isActive) {
+      throw new UnauthorizedException('Admin account is inactive');
+    }
+
+    const now = new Date();
+    await this.prisma.$transaction([
+      this.prisma.adminUser.update({
+        where: { id: resetToken.admin.id },
+        data: { passwordHash: hashPassword(password) },
+      }),
+      this.prisma.adminSession.deleteMany({ where: { adminUserId: resetToken.admin.id } }),
+      this.prisma.adminPasswordResetToken.update({
+        where: { id: resetToken.id },
+        data: { usedAt: now },
+      }),
+    ]);
+
+    await this.audit(resetToken.admin.id, resetToken.admin.email, 'admin.password_reset', 'AdminUser', resetToken.admin.id);
+
+    return { ok: true };
   }
 
   async verifyAdminOtp(token: string, code: string) {
@@ -605,6 +690,29 @@ export class AdminService {
     return updated;
   }
 
+  async updateWorkspaceOwnerPhone(id: string, adminId: string, adminEmail: string, phone: string) {
+    const workspace = await this.prisma.workspace.findUnique({
+      where: { id },
+      select: { id: true, ownerUserId: true, owner: { select: { phone: true, fullName: true, email: true } } },
+    });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+    if (!workspace.ownerUserId) throw new BadRequestException('Workspace owner missing');
+
+    const normalizedPhone = String(phone || '').trim();
+    const updated = await this.prisma.user.update({
+      where: { id: workspace.ownerUserId },
+      data: { phone: normalizedPhone || null },
+      select: { id: true, email: true, fullName: true, phone: true },
+    });
+
+    await this.audit(adminId, adminEmail, 'workspace.update_owner_phone', 'Workspace', id, {
+      previousPhone: workspace.owner?.phone ?? null,
+      nextPhone: updated.phone ?? null,
+    });
+
+    return updated;
+  }
+
   async fixWorkspacePayment(id: string, adminId: string, adminEmail: string) {
     const workspace = await this.prisma.workspace.findUnique({ where: { id } });
     if (!workspace) throw new NotFoundException('Workspace not found');
@@ -942,6 +1050,48 @@ export class AdminService {
     } catch (err) {
       console.error('[ADMIN 2FA] Email send failed:', err);
       // Don't throw – OTP is in DB, admin can retry
+    }
+  }
+
+  private async sendAdminPasswordResetEmail(email: string, fullName: string, token: string): Promise<void> {
+    const apiKey = process.env.RESEND_API_KEY;
+    const from = process.env.RESEND_FROM || process.env.EMAIL_FROM || 'TomaFix <onboarding@resend.dev>';
+    const logoUrl = process.env.EMAIL_LOGO_URL || 'https://www.tomafix.com/bimi-logo-preview.jpg';
+    const resetUrl = `${this.getAdminAppUrl()}/reset-password?token=${encodeURIComponent(token)}&email=${encodeURIComponent(email)}`;
+
+    const html = `
+      <div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial,sans-serif;background:#080E1C;padding:24px 14px;">
+        <div style="max-width:580px;margin:0 auto;background:#0F1829;border:1px solid rgba(232,148,58,0.18);border-radius:16px;overflow:hidden;color:#e6edf6;">
+          <div style="padding:16px 20px;border-bottom:1px solid rgba(232,148,58,0.12);background:rgba(232,148,58,0.06);">
+            <img src="${logoUrl}" alt="TomaFix" style="max-width:150px;height:auto;display:block;" />
+          </div>
+          <div style="padding:24px 20px;line-height:1.6;font-size:14px;">
+            <h2 style="margin:0 0 12px;font-size:20px;">Reset your admin password</h2>
+            <p style="margin:0 0 14px;color:#c4d0da;">Hi ${fullName}, we received a request to reset your TomaFix admin password.</p>
+            <p style="margin:0 0 18px;color:#c4d0da;">Use the secure link below to choose a new password. This link expires in 30 minutes.</p>
+            <a href="${resetUrl}" style="display:inline-block;padding:13px 24px;border-radius:12px;background:linear-gradient(120deg,#E8943A,#F5B668);color:#080E1C;font-weight:800;font-size:14px;text-decoration:none;">Reset password</a>
+            <p style="margin:18px 0 0;color:#8899aa;font-size:12px;word-break:break-all;">If the button does not open, paste this link into your browser:<br />${resetUrl}</p>
+          </div>
+          <div style="padding:12px 20px;border-top:1px solid rgba(255,255,255,0.06);font-size:11px;color:rgba(230,237,246,0.45);">
+            TomaFix Admin Panel · Restricted access
+          </div>
+        </div>
+      </div>
+    `;
+
+    if (!apiKey) {
+      console.warn(`[ADMIN RESET] ${email} → ${resetUrl}`);
+      return;
+    }
+
+    try {
+      await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from, to: [email], subject: 'Reset your TomaFix admin password', html }),
+      });
+    } catch (err) {
+      console.error('[ADMIN RESET] Email send failed:', err);
     }
   }
 }

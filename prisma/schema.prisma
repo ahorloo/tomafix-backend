@@ -1888,6 +1888,7 @@ model AdminUser {
   updatedAt    DateTime  @updatedAt
 
   sessions  AdminSession[]
+  resetTokens AdminPasswordResetToken[]
   auditLogs AdminAuditLog[]
 
   @@index([email])
@@ -1909,6 +1910,21 @@ model AdminSession {
 
   @@index([token])
   @@index([adminUserId])
+}
+
+model AdminPasswordResetToken {
+  id          String   @id @default(cuid())
+  adminUserId String
+  tokenHash   String   @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdAt   DateTime @default(now())
+
+  admin AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+
+  @@index([adminUserId])
+  @@index([expiresAt])
+  @@index([usedAt])
 }
 
 model AdminAuditLog {

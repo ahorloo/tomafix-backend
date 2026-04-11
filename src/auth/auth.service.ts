@@ -64,6 +64,7 @@ export class AuthService {
     const code = this.makeOtp();
     const codeHash = this.hashOtp(code);
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    const isProd = (process.env.NODE_ENV || '').toLowerCase() === 'production';
 
     await this.prisma.otpCode.create({
       data: {
@@ -79,17 +80,24 @@ export class AuthService {
     const hasResend = !!process.env.RESEND_API_KEY;
     if (!hasResend) this.logger.warn(`[DEV LOGIN OTP] ${email} -> ${code}`);
 
-    await this.sendEmailWithResend({
-      to: email,
-      subject: `Your TomaFix login code: ${code}`, 
-      html: this.otpEmailHtml(code),
-    });
+    try {
+      await this.sendEmailWithResend({
+        to: email,
+        subject: `Your TomaFix login code: ${code}`,
+        html: this.otpEmailHtml(code),
+      });
+    } catch (err) {
+      if (isProd) throw err;
+      this.logger.warn(
+        `Login OTP email failed in dev; returning code so auth flow stays usable. To: ${email}. Reason: ${(err as Error).message}`,
+      );
+    }
 
-    const isProd = (process.env.NODE_ENV || '').toLowerCase() === 'production';
     return {
       ok: true,
       message: 'OTP sent',
       ...(!hasResend && !isProd ? { devOtp: code } : {}),
+      ...(hasResend && !isProd ? { devOtp: code } : {}),
     };
   }
 

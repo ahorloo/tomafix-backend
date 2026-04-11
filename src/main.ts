@@ -2,8 +2,10 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
 import { json, urlencoded } from 'express';
+import { createHash } from 'crypto';
 import { AppModule } from './app.module';
 import { assertSafeBillingRuntimeEnv } from './billing/runtime-billing-env.guard';
+import { PrismaService } from './prisma/prisma.service';
 
 function isLocalDevOrigin(origin: string): boolean {
   try {
@@ -45,6 +47,35 @@ function parseCorsOrigins(): string[] {
   }
 
   return Array.from(expanded);
+}
+
+function hashAdminPassword(password: string) {
+  return createHash('sha256').update(password + (process.env.ADMIN_SECRET || 'tf-admin-salt')).digest('hex');
+}
+
+async function seedLocalAdmin(app: any) {
+  const isProd = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+  if (isProd) return;
+
+  const prisma = app.get(PrismaService);
+  const totalAdmins = await prisma.adminUser.count();
+  if (totalAdmins > 0) return;
+
+  const email = String(process.env.ADMIN_EMAIL || 'zotomagroups@gmail.com').trim().toLowerCase();
+  const password = String(process.env.ADMIN_PASSWORD || 'TomaFixLocal123!').trim();
+  const fullName = String(process.env.ADMIN_NAME || 'TomaFix Admin').trim() || 'TomaFix Admin';
+
+  await prisma.adminUser.create({
+    data: {
+      email,
+      fullName,
+      passwordHash: hashAdminPassword(password),
+      role: 'SUPER_ADMIN',
+      isActive: true,
+    },
+  });
+
+  console.log(`🛡️  Seeded local admin: ${email} / ${password}`);
 }
 
 async function bootstrap() {
@@ -113,6 +144,8 @@ async function bootstrap() {
 
   // ✅ Graceful shutdown
   app.enableShutdownHooks();
+
+  await seedLocalAdmin(app);
 
   const port = Number(process.env.PORT ?? 3000);
   await app.listen(port, '0.0.0.0');
