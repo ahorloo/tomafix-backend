@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsDateString } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsDateString, IsEmail } from 'class-validator';
 
 export class CreateVisitorDto {
   @IsString()
@@ -9,9 +9,8 @@ export class CreateVisitorDto {
   @IsString()
   phone?: string;
 
-  @IsOptional()
-  @IsString()
-  email?: string;
+  @IsEmail()
+  email!: string;
 
   @IsOptional()
   @IsString()

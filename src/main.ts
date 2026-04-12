@@ -36,6 +36,26 @@ function parseCorsOrigins(): string[] {
     : [];
 
   const expanded = new Set<string>(configured);
+  const defaultOrigins = [
+    'https://tomafix.com',
+    'https://www.tomafix.com',
+    'https://admin.tomafix.com',
+    'https://admin.www.tomafix.com',
+  ];
+
+  const addOrigin = (value?: string | null) => {
+    if (!value) return;
+    try {
+      expanded.add(new URL(value).origin);
+    } catch {
+      // Ignore invalid URLs here; the runtime guard validates the production config separately.
+    }
+  };
+
+  addOrigin(process.env.FRONTEND_URL);
+  addOrigin(process.env.APP_BASE_URL);
+  addOrigin(process.env.ADMIN_APP_URL);
+  defaultOrigins.forEach((origin) => expanded.add(origin));
 
   for (const origin of configured) {
     if (origin.includes('localhost')) {
@@ -128,9 +148,9 @@ async function bootstrap() {
     }),
   );
 
-  // Allow image data URLs and richer payloads for request attachments.
-  app.use(json({ limit: '6mb' }));
-  app.use(urlencoded({ extended: true, limit: '6mb' }));
+  // Allow technician onboarding payloads with logo + verification document uploads.
+  app.use(json({ limit: '32mb' }));
+  app.use(urlencoded({ extended: true, limit: '32mb' }));
 
   // ✅ Strict request validation (good for API safety)
   app.useGlobalPipes(

@@ -22,18 +22,38 @@ export class OnboardingService {
     private readonly auth: AuthService,
   ) {}
 
+  private async syncUserPhoneFromResidentRecord(workspaceId: string, emailInput: string) {
+    const workspaceIdNormalized = String(workspaceId || '').trim();
+    const email = String(emailInput || '').trim().toLowerCase();
+    if (!workspaceIdNormalized || !email) return null;
+
+    const [estateResident, apartmentResident] = await Promise.all([
+      this.prisma.estateResident.findFirst({
+        where: { workspaceId: workspaceIdNormalized, email },
+        select: { phone: true },
+      }),
+      this.prisma.apartmentResident.findFirst({
+        where: { workspaceId: workspaceIdNormalized, email },
+        select: { phone: true },
+      }),
+    ]);
+
+    return String(estateResident?.phone || apartmentResident?.phone || '').trim() || null;
+  }
+
   /**
    * Step 1 (Strict): Create workspace + owner member.
    * Workspace must start at PENDING_OTP.
    */
   async createWorkspace(dto: CreateWorkspaceDto) {
     const email = dto.ownerEmail.trim().toLowerCase();
-    const phone = dto.ownerPhone?.trim() || null;
+    const phone = String(dto.ownerPhone || '').trim();
+    if (!phone) throw new BadRequestException('ownerPhone is required');
 
     const user = await this.prisma.user.upsert({
       where: { email },
-      update: { fullName: dto.ownerFullName, ...(phone ? { phone } : {}) },
-      create: { email, fullName: dto.ownerFullName, ...(phone ? { phone } : {}) },
+      update: { fullName: dto.ownerFullName, phone },
+      create: { email, fullName: dto.ownerFullName, phone },
     });
 
     const template = await this.prisma.template.upsert({
@@ -255,10 +275,32 @@ export class OnboardingService {
       throw new UnauthorizedException('Invite email mismatch');
     }
 
+    const residentPhone = await this.syncUserPhoneFromResidentRecord(invite.workspaceId, email);
+    let phone: string | undefined;
+    if (residentPhone) {
+      const conflictingUser = await this.prisma.user.findFirst({
+        where: {
+          phone: residentPhone,
+          email: { not: email },
+        },
+        select: { id: true },
+      });
+      if (!conflictingUser) {
+        phone = residentPhone;
+      }
+    }
+
     const user = await this.prisma.user.upsert({
       where: { email },
-      update: { fullName: input.fullName?.trim() || undefined },
-      create: { email, fullName: input.fullName?.trim() || null },
+      update: {
+        fullName: input.fullName?.trim() || undefined,
+        ...(phone ? { phone } : {}),
+      },
+      create: {
+        email,
+        fullName: input.fullName?.trim() || null,
+        ...(phone ? { phone } : {}),
+      },
     });
 
     await this.prisma.workspaceMember.upsert({
@@ -412,7 +454,25 @@ export class OnboardingService {
               role: ResidentRole.TENANT,
               status: ResidentStatus.ACTIVE,
             },
+        });
+
+      const normalizedPhone = String(row.phone || '').trim();
+      if (normalizedPhone) {
+        const conflict = await this.prisma.user.findFirst({
+          where: {
+            phone: normalizedPhone,
+            email: { not: row.email },
+          },
+          select: { id: true },
+        });
+        if (!conflict) {
+          await this.prisma.user.upsert({
+            where: { email: row.email },
+            update: { fullName: row.fullName, phone: normalizedPhone },
+            create: { email: row.email, fullName: row.fullName, phone: normalizedPhone },
           });
+        }
+      }
 
       if (row.unitId) {
         if (ws.templateType === TemplateType.ESTATE) {

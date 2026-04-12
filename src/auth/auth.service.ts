@@ -29,6 +29,45 @@ export class AuthService {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  private async syncUserPhoneFromResidentRecords(userId: string, emailInput: string) {
+    const email = String(emailInput || '').trim().toLowerCase();
+    if (!userId || !email) return null;
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, phone: true },
+    });
+    if (!user || user.phone) return user;
+
+    const [estateResident, apartmentResident] = await Promise.all([
+      this.prisma.estateResident.findFirst({
+        where: { email },
+        select: { phone: true },
+      }),
+      this.prisma.apartmentResident.findFirst({
+        where: { email },
+        select: { phone: true },
+      }),
+    ]);
+
+    const phone = String(estateResident?.phone || apartmentResident?.phone || '').trim();
+    if (!phone) return user;
+
+    const conflictingUser = await this.prisma.user.findFirst({
+      where: {
+        phone,
+        id: { not: userId },
+      },
+      select: { id: true },
+    });
+    if (conflictingUser) return user;
+
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { phone },
+    });
+  }
+
   async sendLoginOtp(emailInput: string) {
     const email = String(emailInput || '').trim().toLowerCase();
     if (!email) throw new BadRequestException('email is required');
@@ -38,6 +77,8 @@ export class AuthService {
       update: {},
       create: { email },
     });
+
+    await this.syncUserPhoneFromResidentRecords(user.id, email);
 
     const latest = await this.prisma.otpCode.findFirst({
       where: {
@@ -109,6 +150,8 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user) throw new UnauthorizedException('Invalid login');
 
+    await this.syncUserPhoneFromResidentRecords(user.id, email);
+
     const otp = await this.prisma.otpCode.findFirst({
       where: {
         userId: user.id,
@@ -149,6 +192,8 @@ export class AuthService {
   async createSessionForUser(userId: string, preferredWorkspaceId?: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('User not found');
+
+    await this.syncUserPhoneFromResidentRecords(user.id, user.email || '');
 
     const memberships = await this.getMembershipsForUser(userId);
     const defaultWorkspaceId =

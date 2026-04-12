@@ -69,6 +69,7 @@ export class VisitorsService {
         workspaceName,
         unitLabel: visitor.unitLabel,
         validUntil: visitor.validUntil,
+        qrToken: visitor.qrToken,
       }).catch((e) => this.logger.warn(`Visitor invite email failed: ${e?.message || e}`));
     }
 

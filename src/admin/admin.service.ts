@@ -713,6 +713,45 @@ export class AdminService {
     return updated;
   }
 
+  private isUniqueConstraintError(error: unknown) {
+    return typeof error === 'object' && error !== null && 'code' in error && (error as any).code === 'P2002';
+  }
+
+  private async backfillMissingUserPhonesFromOwnedWorkspaces() {
+    const users = await this.prisma.user.findMany({
+      where: {
+        phone: null,
+        ownedWorkspaces: { some: {} },
+      },
+      select: {
+        id: true,
+        ownedWorkspaces: {
+          orderBy: { createdAt: 'desc' },
+          select: {
+            owner: { select: { phone: true } },
+          },
+        },
+      },
+    });
+
+    for (const user of users) {
+      const nextPhone = user.ownedWorkspaces
+        .map((workspace) => String(workspace.owner?.phone || '').trim())
+        .find((value) => !!value);
+
+      if (!nextPhone) continue;
+
+      try {
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { phone: nextPhone },
+        });
+      } catch (error) {
+        if (!this.isUniqueConstraintError(error)) throw error;
+      }
+    }
+  }
+
   async fixWorkspacePayment(id: string, adminId: string, adminEmail: string) {
     const workspace = await this.prisma.workspace.findUnique({ where: { id } });
     if (!workspace) throw new NotFoundException('Workspace not found');
@@ -746,6 +785,8 @@ export class AdminService {
       ];
     }
 
+    await this.backfillMissingUserPhonesFromOwnedWorkspaces();
+
     const [users, total] = await Promise.all([
       this.prisma.user.findMany({
         where,
@@ -764,6 +805,36 @@ export class AdminService {
     ]);
 
     return { users, total, page, limit };
+  }
+
+  async updateUserPhone(id: string, adminId: string, adminEmail: string, phone: string) {
+    const existing = await this.prisma.user.findUnique({
+      where: { id },
+      select: { id: true, email: true, fullName: true, phone: true },
+    });
+    if (!existing) throw new NotFoundException('User not found');
+
+    const normalizedPhone = String(phone || '').trim();
+
+    try {
+      const updated = await this.prisma.user.update({
+        where: { id },
+        data: { phone: normalizedPhone || null },
+        select: { id: true, email: true, fullName: true, phone: true, createdAt: true, updatedAt: true },
+      });
+
+      await this.audit(adminId, adminEmail, 'user.update_phone', 'User', id, {
+        previousPhone: existing.phone ?? null,
+        nextPhone: updated.phone ?? null,
+      });
+
+      return updated;
+    } catch (error) {
+      if (this.isUniqueConstraintError(error)) {
+        throw new BadRequestException('Phone already belongs to another user');
+      }
+      throw error;
+    }
   }
 
   // ── Technician Applications ───────────────────────────────────────────────

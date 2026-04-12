@@ -142,6 +142,13 @@ export class AdminController {
     return this.adminService.listUsers(Number(page) || 1, 30, search);
   }
 
+  @Patch('users/:id/phone')
+  @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'OPS_ADMIN')
+  updateUserPhone(@Param('id') id: string, @Body() body: { phone: string }, @Req() req: any) {
+    return this.adminService.updateUserPhone(id, req.adminUser.id, req.adminUser.email, body.phone ?? '');
+  }
+
   // ── Technician Applications ───────────────────────────────────────────────
 
   @Get('technician-applications')

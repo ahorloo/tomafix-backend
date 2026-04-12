@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
+import QRCode from 'qrcode';
 
 @Injectable()
 export class MailService {
@@ -187,15 +188,27 @@ export class MailService {
     );
   }
 
-  sendVisitorInviteEmail(args: {
+  async sendVisitorInviteEmail(args: {
     to: string;
     visitorName: string;
     workspaceName: string;
     unitLabel?: string | null;
     validUntil?: Date | null;
+    qrToken: string;
   }) {
     const validity = args.validUntil ? `<p><strong>Valid until:</strong> ${args.validUntil.toLocaleString()}</p>` : '';
     const unit = args.unitLabel ? `<p><strong>Unit / destination:</strong> ${args.unitLabel}</p>` : '';
+    const qrDataUrl = await QRCode.toDataURL(args.qrToken, {
+      width: 260,
+      margin: 2,
+      color: { dark: '#08101f', light: '#ffffff' },
+    }).catch(() => '');
+    const qrBlock = qrDataUrl
+      ? `<div style="margin:18px 0;padding:14px;border:1px solid rgba(15,23,42,0.08);border-radius:14px;text-align:center;background:#ffffff;">
+           <img src="${qrDataUrl}" alt="Visitor QR Code" style="width:220px;height:220px;display:block;margin:0 auto;border-radius:12px;" />
+           <p style="margin:10px 0 0;font-size:12px;color:#475569;">Show this QR code at the gate. The guard scans it to verify entry.</p>
+         </div>`
+      : `<p><strong>Pass code:</strong> ${args.qrToken}</p>`;
     return this.send(
       args.to,
       `Your TomaFix visitor pass for ${args.workspaceName}`,
@@ -203,7 +216,8 @@ export class MailService {
        <p>You have been invited to visit <strong>${args.workspaceName}</strong>.</p>
        ${unit}
        ${validity}
-       <p>Please present your visitor pass or QR code at the gate when you arrive.</p>
+       ${qrBlock}
+       <p>If you cannot show the QR image, use the pass code above or ask the host to resend the invite.</p>
        <p>— TomaFix</p>`,
     );
   }

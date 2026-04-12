@@ -54,6 +54,38 @@ export class ApartmentService {
     private readonly onboarding: OnboardingService,
   ) {}
 
+  private async syncUserContactFromResident(input: { email?: string | null; fullName?: string | null; phone?: string | null }) {
+    const email = String(input.email || '').trim().toLowerCase();
+    if (!email) return null;
+
+    const fullName = String(input.fullName || '').trim();
+    const phone = String(input.phone || '').trim();
+
+    const data: { fullName?: string; phone?: string } = {};
+    if (fullName) data.fullName = fullName;
+
+    if (phone) {
+      const conflictingUser = await this.prisma.user.findFirst({
+        where: {
+          phone,
+          email: { not: email },
+        },
+        select: { id: true },
+      });
+      if (!conflictingUser) {
+        data.phone = phone;
+      }
+    }
+
+    if (!Object.keys(data).length) return null;
+
+    return this.prisma.user.upsert({
+      where: { email },
+      update: data,
+      create: { email, ...data },
+    });
+  }
+
   private async sendEmail(args: { to: string; subject: string; html: string }) {
     const apiKey = process.env.RESEND_API_KEY;
     const from = process.env.RESEND_FROM || process.env.EMAIL_FROM || 'TomaFix <onboarding@resend.dev>';
@@ -710,6 +742,12 @@ export class ApartmentService {
           },
         });
 
+    await this.syncUserContactFromResident({
+      email: resident.email,
+      fullName: resident.fullName,
+      phone: resident.phone,
+    });
+
     let inviteSent = false;
     let inviteUrl: string | null = null;
     if (resident.email) {
@@ -796,6 +834,12 @@ export class ApartmentService {
           },
           include: { unit: { select: { id: true, label: true, block: true, floor: true } } },
         });
+
+    await this.syncUserContactFromResident({
+      email: updated.email ?? resident.email,
+      fullName: updated.fullName,
+      phone: updated.phone,
+    });
 
     if (resident.unitId) await this.syncUnitOccupancy(workspaceId, resident.unitId);
     if (updated.unitId && updated.unitId !== resident.unitId) await this.syncUnitOccupancy(workspaceId, updated.unitId);
