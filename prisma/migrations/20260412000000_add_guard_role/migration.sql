@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "MemberRole" ADD VALUE IF NOT EXISTS 'GUARD';
