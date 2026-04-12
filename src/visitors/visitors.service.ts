@@ -125,6 +125,13 @@ export class VisitorsService {
   }
 
   async scanVisitor(workspaceId: string, scannerId: string, dto: ScanVisitorDto) {
+    // Accept full pass URL or raw token — strip URL prefix if present
+    const rawToken = String(dto.qrToken || '').trim();
+    const qrToken = rawToken.includes('/visitor-pass/')
+      ? rawToken.split('/visitor-pass/').pop()!.split('?')[0].split('#')[0]
+      : rawToken;
+    dto = { ...dto, qrToken };
+
     const [workspace, scanner] = await Promise.all([
       this.getWorkspace(workspaceId),
       scannerId ? this.prisma.user.findUnique({ where: { id: scannerId }, select: { fullName: true, email: true } }) : null,

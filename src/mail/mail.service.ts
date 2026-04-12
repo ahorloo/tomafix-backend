@@ -197,10 +197,11 @@ export class MailService {
   }) {
     const validity = args.validUntil ? `<p><strong>Valid until:</strong> ${args.validUntil.toLocaleString()}</p>` : '';
     const unit = args.unitLabel ? `<p><strong>Unit / destination:</strong> ${args.unitLabel}</p>` : '';
-    // Use a hosted QR image URL — base64 data URLs are blocked by Gmail/Apple Mail
-    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(args.qrToken)}&bgcolor=ffffff&color=08101f&margin=10`;
+    // QR encodes the full TomaFix pass URL — phone cameras open the pass page directly
+    const passUrl = `https://tomafix.com/visitor-pass/${args.qrToken}`;
+    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(passUrl)}&bgcolor=ffffff&color=08101f&margin=10`;
     const qrBlock = `<div style="margin:18px 0;padding:14px;border:1px solid rgba(15,23,42,0.08);border-radius:14px;text-align:center;background:#ffffff;">
-         <img src="${qrImageUrl}" alt="Visitor QR Code" style="width:220px;height:220px;display:block;margin:0 auto;border-radius:12px;" />
+         <img src="${qrImageUrl}" alt="Visitor QR Code" style="width:240px;height:240px;display:block;margin:0 auto;border-radius:12px;" />
          <p style="margin:10px 0 0;font-size:12px;color:#475569;">Show this QR code at the gate. The guard scans it to verify entry.</p>
        </div>`;
     return this.send(
