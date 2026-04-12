@@ -268,12 +268,27 @@ export class AuthService {
         : dto.role === MemberRole.MANAGER
           ? MemberRole.MANAGER
           : dto.role === MemberRole.GUARD
-            ? MemberRole.GUARD
+          ? MemberRole.GUARD
           : MemberRole.STAFF;
 
     // Managers can only create Staff, Guard, or Technician accounts, not other Managers.
     if (actorRole === MemberRole.MANAGER && requestedRole === MemberRole.MANAGER) {
       throw new BadRequestException('Managers can only add Staff, Guard, or Technician members.');
+    }
+
+    const existingMembership = await this.prisma.workspaceMember.findUnique({
+      where: { workspaceId_userId: { workspaceId, userId: (await this.prisma.user.findUnique({ where: { email }, select: { id: true } }))?.id || '' } },
+      select: { role: true, isActive: true },
+    });
+
+    if (existingMembership?.role === MemberRole.OWNER_ADMIN) {
+      throw new BadRequestException('That email already belongs to the workspace owner. Use a different email.');
+    }
+
+    if (existingMembership?.role === MemberRole.RESIDENT) {
+      throw new BadRequestException(
+        'That email already belongs to a resident in this workspace. Use a different email for guard/staff access.',
+      );
     }
 
     const user = await this.prisma.user.upsert({
@@ -282,12 +297,12 @@ export class AuthService {
       create: { email, fullName },
     });
 
-    const existingMembership = await this.prisma.workspaceMember.findUnique({
+    const workspaceMembership = existingMembership?.role ? existingMembership : await this.prisma.workspaceMember.findUnique({
       where: { workspaceId_userId: { workspaceId, userId: user.id } },
-      select: { role: true },
+      select: { role: true, isActive: true },
     });
 
-    if (requestedRole === MemberRole.MANAGER && existingMembership?.role !== MemberRole.MANAGER) {
+    if (requestedRole === MemberRole.MANAGER && workspaceMembership?.role !== MemberRole.MANAGER) {
       await this.assertManagerCapacity(workspaceId, (ws as any).planName || 'Starter', ws.templateType);
     }
 
