@@ -52,7 +52,7 @@ const baseByRole: Record<MemberRole, PermissionKey[]> = {
     'visitors:view',
     'visitors:manage',
   ],
-  GUARD: ['dashboard:view', 'visitors:view', 'visitors:manage'],
+  GUARD: ['dashboard:view', 'visitors:view', 'visitors:manage', 'notices:view'],
   MANAGER: [
     'dashboard:view',
     'units:view',

@@ -39,9 +39,8 @@ export class VisitorsController {
     @Req() req: any,
     @Body() dto: CreateVisitorDto,
   ) {
-    const userId: string = req.user?.id ?? '';
-    const userName: string = req.user?.fullName ?? req.user?.email ?? 'Unknown';
-    return this.visitors.createVisitor(workspaceId, userId, userName, dto);
+    const userId: string = req.authUserId ?? '';
+    return this.visitors.createVisitor(workspaceId, userId, dto);
   }
 
   // Get single visitor by ID
@@ -62,8 +61,8 @@ export class VisitorsController {
     @Req() req: any,
     @Body() dto: ScanVisitorDto,
   ) {
-    const scannerName: string = req.user?.fullName ?? req.user?.email ?? 'Guard';
-    return this.visitors.scanVisitor(workspaceId, scannerName, dto);
+    const scannerId: string = req.authUserId ?? '';
+    return this.visitors.scanVisitor(workspaceId, scannerId, dto);
   }
 
   // Cancel a visitor pass

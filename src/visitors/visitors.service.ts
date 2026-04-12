@@ -36,26 +36,32 @@ export class VisitorsService {
     }
   }
 
-  async createVisitor(workspaceId: string, userId: string, userName: string, dto: CreateVisitorDto) {
-    const workspace = await this.getWorkspace(workspaceId);
+  async createVisitor(workspaceId: string, userId: string, dto: CreateVisitorDto) {
+    const [workspace, inviter] = await Promise.all([
+      this.getWorkspace(workspaceId),
+      userId ? this.prisma.user.findUnique({ where: { id: userId }, select: { fullName: true, email: true } }) : null,
+    ]);
     const repo = this.visitorDelegate(workspace.templateType);
+    const invitedByName = inviter?.fullName || inviter?.email || null;
+
+    const isOffice = workspace.templateType === TemplateType.OFFICE;
+    const locationFields = isOffice
+      ? { areaId: dto.areaId || null, areaName: dto.areaName || null }
+      : { unitId: dto.unitId || null, unitLabel: dto.unitLabel || null };
 
     const visitor = await repo.create({
       data: {
         workspaceId,
-        invitedByUserId: userId,
-        invitedByName: userName,
+        invitedByUserId: userId || null,
+        invitedByName,
         name: dto.name,
-        phone: dto.phone,
+        phone: dto.phone || null,
         email: dto.email,
-        purpose: dto.purpose,
-        unitId: workspace.templateType === TemplateType.OFFICE ? null : dto.unitId,
-        unitLabel: workspace.templateType === TemplateType.OFFICE ? null : dto.unitLabel,
-        areaId: workspace.templateType === TemplateType.OFFICE ? dto.areaId : null,
-        areaName: workspace.templateType === TemplateType.OFFICE ? dto.areaName : null,
+        purpose: dto.purpose || null,
+        ...locationFields,
         validFrom: dto.validFrom ? new Date(dto.validFrom) : null,
         validUntil: dto.validUntil ? new Date(dto.validUntil) : null,
-        notes: dto.notes,
+        notes: dto.notes || null,
         status: VisitorStatus.EXPECTED,
       },
     });
@@ -118,8 +124,12 @@ export class VisitorsService {
     throw new NotFoundException('Invalid or expired visitor pass');
   }
 
-  async scanVisitor(workspaceId: string, scannerName: string, dto: ScanVisitorDto) {
-    const workspace = await this.getWorkspace(workspaceId);
+  async scanVisitor(workspaceId: string, scannerId: string, dto: ScanVisitorDto) {
+    const [workspace, scanner] = await Promise.all([
+      this.getWorkspace(workspaceId),
+      scannerId ? this.prisma.user.findUnique({ where: { id: scannerId }, select: { fullName: true, email: true } }) : null,
+    ]);
+    const scannerName = scanner?.fullName || scanner?.email || 'Guard';
     const repo = this.visitorDelegate(workspace.templateType);
     const visitor = await repo.findUnique({ where: { qrToken: dto.qrToken } });
     if (!visitor) throw new NotFoundException('Invalid QR code — no visitor found');
