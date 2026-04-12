@@ -1,0 +1,21 @@
+name: Keep Render Alive
+
+on:
+  schedule:
+    # Ping every 14 minutes — Render spins down after 15 min of inactivity
+    - cron: '*/14 * * * *'
+  workflow_dispatch: # allow manual trigger from GitHub Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping TomaFix API health endpoint
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 https://tomafix-api.onrender.com/api/v1/health)
+          echo "Health check status: $STATUS"
+          if [ "$STATUS" = "200" ] || [ "$STATUS" = "304" ]; then
+            echo "✅ Backend is alive"
+          else
+            echo "⚠️ Unexpected status $STATUS — Render may still be waking up"
+          fi
