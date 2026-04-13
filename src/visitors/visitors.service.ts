@@ -210,7 +210,7 @@ export class VisitorsService {
       throw new BadRequestException('Only passes with Expected status can be edited.');
     }
 
-    return repo.update({
+    const updated = await repo.update({
       where: { id: visitorId },
       data: {
         ...(dto.purpose !== undefined && { purpose: dto.purpose || null }),
@@ -221,6 +221,21 @@ export class VisitorsService {
         }),
       },
     });
+
+    // Notify the visitor that their pass has been updated
+    if (updated.email) {
+      this.mail.sendVisitorPassUpdatedEmail({
+        to: updated.email,
+        visitorName: updated.name,
+        workspaceName: workspace.name,
+        unitLabel: updated.unitLabel ?? null,
+        purpose: updated.purpose ?? null,
+        validUntil: updated.validUntil ?? null,
+        qrToken: updated.qrToken,
+      }).catch((e) => this.logger.warn(`Visitor pass update email failed: ${e?.message || e}`));
+    }
+
+    return updated;
   }
 
   async cancelVisitor(workspaceId: string, visitorId: string) {

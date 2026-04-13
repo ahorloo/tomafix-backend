@@ -217,6 +217,40 @@ export class MailService {
     );
   }
 
+  async sendVisitorPassUpdatedEmail(args: {
+    to: string;
+    visitorName: string;
+    workspaceName: string;
+    unitLabel?: string | null;
+    purpose?: string | null;
+    validUntil?: Date | null;
+    qrToken: string;
+  }) {
+    const validity = args.validUntil
+      ? `<p><strong>Valid until:</strong> ${args.validUntil.toLocaleString()}</p>`
+      : '<p><strong>Valid until:</strong> No expiry set</p>';
+    const unit = args.unitLabel ? `<p><strong>Unit / destination:</strong> ${args.unitLabel}</p>` : '';
+    const purpose = args.purpose ? `<p><strong>Purpose:</strong> ${args.purpose}</p>` : '';
+    const passUrl = `https://tomafix.com/visitor-pass/${args.qrToken}`;
+    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(passUrl)}&bgcolor=ffffff&color=08101f&margin=10`;
+    const qrBlock = `<div style="margin:18px 0;padding:14px;border:1px solid rgba(15,23,42,0.08);border-radius:14px;text-align:center;background:#ffffff;">
+         <img src="${qrImageUrl}" alt="Visitor QR Code" style="width:240px;height:240px;display:block;margin:0 auto;border-radius:12px;" />
+         <p style="margin:10px 0 0;font-size:12px;color:#475569;">Show this QR code at the gate. The guard scans it to verify entry.</p>
+       </div>`;
+    return this.send(
+      args.to,
+      `Your visitor pass for ${args.workspaceName} has been updated`,
+      `<p>Hi ${args.visitorName},</p>
+       <p>Your visitor pass for <strong>${args.workspaceName}</strong> has been updated. Here are your latest pass details:</p>
+       ${unit}
+       ${purpose}
+       ${validity}
+       ${qrBlock}
+       <p>If you have any questions, please contact the person who invited you.</p>
+       <p>— TomaFix</p>`,
+    );
+  }
+
   sendAmenityBookingEmail(args: {
     to: string;
     residentName: string;
