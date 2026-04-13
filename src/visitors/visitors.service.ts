@@ -187,6 +187,42 @@ export class VisitorsService {
     throw new BadRequestException('Cannot process this visitor pass');
   }
 
+  async updateVisitor(
+    workspaceId: string,
+    visitorId: string,
+    requesterId: string,
+    requesterRole: string,
+    dto: { purpose?: string; phone?: string; validUntil?: string | null; notes?: string },
+  ) {
+    const workspace = await this.getWorkspace(workspaceId);
+    const repo = this.visitorDelegate(workspace.templateType);
+    const visitor = await repo.findFirst({ where: { id: visitorId, workspaceId } });
+    if (!visitor) throw new NotFoundException('Visitor not found');
+
+    // Only the inviter or an owner/manager can edit
+    const isAdmin = requesterRole === 'OWNER_ADMIN' || requesterRole === 'MANAGER';
+    const isOwner = visitor.invitedByUserId && visitor.invitedByUserId === requesterId;
+    if (!isAdmin && !isOwner) {
+      throw new BadRequestException('You can only edit visitor passes you created.');
+    }
+
+    if (visitor.status !== VisitorStatus.EXPECTED) {
+      throw new BadRequestException('Only passes with Expected status can be edited.');
+    }
+
+    return repo.update({
+      where: { id: visitorId },
+      data: {
+        ...(dto.purpose !== undefined && { purpose: dto.purpose || null }),
+        ...(dto.phone !== undefined && { phone: dto.phone || null }),
+        ...(dto.notes !== undefined && { notes: dto.notes || null }),
+        ...(dto.validUntil !== undefined && {
+          validUntil: dto.validUntil ? new Date(dto.validUntil) : null,
+        }),
+      },
+    });
+  }
+
   async cancelVisitor(workspaceId: string, visitorId: string) {
     const workspace = await this.getWorkspace(workspaceId);
     const repo = this.visitorDelegate(workspace.templateType);
