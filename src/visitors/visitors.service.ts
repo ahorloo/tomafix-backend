@@ -252,6 +252,107 @@ export class VisitorsService {
     });
   }
 
+  async createWalkIn(workspaceId: string, scannerId: string, dto: { name: string; phone?: string; purpose?: string; unitId?: string; unitLabel?: string; areaId?: string; areaName?: string }) {
+    const [workspace, scanner] = await Promise.all([
+      this.getWorkspace(workspaceId),
+      scannerId ? this.prisma.user.findUnique({ where: { id: scannerId }, select: { fullName: true, email: true } }) : null,
+    ]);
+    const repo = this.visitorDelegate(workspace.templateType);
+    const scannerName = scanner?.fullName || scanner?.email || 'Guard';
+    const now = new Date();
+
+    const isOffice = workspace.templateType === 'OFFICE';
+    const locationFields = isOffice
+      ? { areaId: dto.areaId || null, areaName: dto.areaName || null }
+      : { unitId: dto.unitId || null, unitLabel: dto.unitLabel || null };
+
+    const visitor = await repo.create({
+      data: {
+        workspaceId,
+        invitedByUserId: null,
+        invitedByName: null,
+        name: dto.name,
+        phone: dto.phone || null,
+        email: null,
+        purpose: dto.purpose || 'Walk-in',
+        ...locationFields,
+        validFrom: now,
+        validUntil: new Date(now.getTime() + 8 * 60 * 60 * 1000), // 8 hours from now
+        status: VisitorStatus.CHECKED_IN,
+        checkedInAt: now,
+        checkedInByName: scannerName,
+      },
+    });
+
+    return { action: 'WALK_IN_CHECKED_IN', visitor };
+  }
+
+  async extendVisitor(workspaceId: string, visitorId: string, validUntil: string) {
+    const workspace = await this.getWorkspace(workspaceId);
+    const repo = this.visitorDelegate(workspace.templateType);
+    const visitor = await repo.findFirst({ where: { id: visitorId, workspaceId } });
+    if (!visitor) throw new NotFoundException('Visitor not found');
+    if (visitor.status === VisitorStatus.CANCELLED || visitor.status === VisitorStatus.EXPIRED) {
+      throw new BadRequestException('Cannot extend a cancelled or expired pass');
+    }
+    const newDate = new Date(validUntil);
+    if (isNaN(newDate.getTime())) throw new BadRequestException('Invalid date');
+    return repo.update({ where: { id: visitorId }, data: { validUntil: newDate } });
+  }
+
+  async manualCheckIn(workspaceId: string, visitorId: string, userId: string, role: string) {
+    const isAdmin = role === 'OWNER_ADMIN' || role === 'MANAGER';
+    if (!isAdmin) throw new BadRequestException('Only admins can manually check in visitors');
+    const workspace = await this.getWorkspace(workspaceId);
+    const repo = this.visitorDelegate(workspace.templateType);
+    const visitor = await repo.findFirst({ where: { id: visitorId, workspaceId } });
+    if (!visitor) throw new NotFoundException('Visitor not found');
+    if (visitor.status !== VisitorStatus.EXPECTED) {
+      throw new BadRequestException('Only expected visitors can be checked in');
+    }
+    const user = userId ? await this.prisma.user.findUnique({ where: { id: userId }, select: { fullName: true, email: true } }) : null;
+    const checkerName = user?.fullName || user?.email || 'Admin';
+    const updated = await repo.update({
+      where: { id: visitorId },
+      data: { status: VisitorStatus.CHECKED_IN, checkedInAt: new Date(), checkedInByName: checkerName },
+    });
+    return { action: 'CHECKED_IN', visitor: updated };
+  }
+
+  async manualCheckOut(workspaceId: string, visitorId: string, userId: string) {
+    const workspace = await this.getWorkspace(workspaceId);
+    const repo = this.visitorDelegate(workspace.templateType);
+    const visitor = await repo.findFirst({ where: { id: visitorId, workspaceId } });
+    if (!visitor) throw new NotFoundException('Visitor not found');
+    if (visitor.status !== VisitorStatus.CHECKED_IN) {
+      throw new BadRequestException('Only checked-in visitors can be checked out');
+    }
+    const user = userId ? await this.prisma.user.findUnique({ where: { id: userId }, select: { fullName: true, email: true } }) : null;
+    const checkerName = user?.fullName || user?.email || 'Admin';
+    const updated = await repo.update({
+      where: { id: visitorId },
+      data: { status: VisitorStatus.CHECKED_OUT, checkedOutAt: new Date(), checkedOutByName: checkerName },
+    });
+    return { action: 'CHECKED_OUT', visitor: updated };
+  }
+
+  async resendPass(workspaceId: string, visitorId: string) {
+    const workspace = await this.getWorkspace(workspaceId);
+    const repo = this.visitorDelegate(workspace.templateType);
+    const visitor = await repo.findFirst({ where: { id: visitorId, workspaceId } });
+    if (!visitor) throw new NotFoundException('Visitor not found');
+    if (!visitor.email) throw new BadRequestException('This visitor has no email address');
+    await this.mail.sendVisitorInviteEmail({
+      to: visitor.email,
+      visitorName: visitor.name,
+      workspaceName: workspace.name,
+      unitLabel: visitor.unitLabel ?? null,
+      validUntil: visitor.validUntil ?? null,
+      qrToken: visitor.qrToken,
+    });
+    return { ok: true };
+  }
+
   async getStats(workspaceId: string) {
     const workspace = await this.getWorkspace(workspaceId);
     const repo = this.visitorDelegate(workspace.templateType);

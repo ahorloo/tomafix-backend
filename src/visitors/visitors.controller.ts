@@ -1,12 +1,11 @@
 import { Body, Controller, ForbiddenException, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
-import { MemberRole } from '@prisma/client';
 import { VisitorsService } from './visitors.service';
 import { CreateVisitorDto } from './dto/create-visitor.dto';
+import { CreateWalkInDto } from './dto/create-walkin.dto';
 import { ScanVisitorDto } from './dto/scan-visitor.dto';
 import { AuthGuard } from '../auth/auth.guard';
 import { WorkspaceAccessGuard } from '../auth/workspace-access.guard';
 import { WorkspacePermission } from '../auth/workspace-permission.decorator';
-import { WorkspaceRoles } from '../auth/workspace-roles.decorator';
 
 @UseGuards(AuthGuard, WorkspaceAccessGuard)
 @Controller('workspaces/:workspaceId/visitors')
@@ -91,5 +90,63 @@ export class VisitorsController {
     @Param('visitorId') visitorId: string,
   ) {
     return this.visitors.cancelVisitor(workspaceId, visitorId);
+  }
+
+  // Guard walk-in registration — creates a visitor and immediately checks them in
+  @WorkspacePermission('visitors:view')
+  @Post('walk-in')
+  createWalkIn(
+    @Param('workspaceId') workspaceId: string,
+    @Req() req: any,
+    @Body() dto: CreateWalkInDto,
+  ) {
+    const scannerId: string = req.authUserId ?? '';
+    return this.visitors.createWalkIn(workspaceId, scannerId, dto);
+  }
+
+  // Extend a visitor pass valid-until time (admin/owner/inviter)
+  @WorkspacePermission('visitors:view')
+  @Patch(':visitorId/extend')
+  extendVisitor(
+    @Param('workspaceId') workspaceId: string,
+    @Param('visitorId') visitorId: string,
+    @Body() dto: { validUntil: string },
+  ) {
+    return this.visitors.extendVisitor(workspaceId, visitorId, dto.validUntil);
+  }
+
+  // Manual check-in (admin/manager only — for when QR fails)
+  @WorkspacePermission('visitors:view')
+  @Patch(':visitorId/check-in')
+  manualCheckIn(
+    @Param('workspaceId') workspaceId: string,
+    @Param('visitorId') visitorId: string,
+    @Req() req: any,
+  ) {
+    const userId: string = req.authUserId ?? '';
+    const role: string = req.workspaceContext?.role ?? '';
+    return this.visitors.manualCheckIn(workspaceId, visitorId, userId, role);
+  }
+
+  // Manual check-out (admin/manager only)
+  @WorkspacePermission('visitors:view')
+  @Patch(':visitorId/check-out')
+  manualCheckOut(
+    @Param('workspaceId') workspaceId: string,
+    @Param('visitorId') visitorId: string,
+    @Req() req: any,
+  ) {
+    const userId: string = req.authUserId ?? '';
+    return this.visitors.manualCheckOut(workspaceId, visitorId, userId);
+  }
+
+  // Resend visitor pass email
+  @WorkspacePermission('visitors:view')
+  @Post(':visitorId/resend-pass')
+  resendPass(
+    @Param('workspaceId') workspaceId: string,
+    @Param('visitorId') visitorId: string,
+  ) {
+    return this.visitors.resendPass(workspaceId, visitorId);
   }
 }
