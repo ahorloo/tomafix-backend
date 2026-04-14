@@ -10,6 +10,16 @@ export class ReportsController {
   constructor(private readonly reports: ReportsService) {}
 
   @WorkspacePermission('dashboard:view')
+  @Get('trends')
+  trends(
+    @Param('workspaceId') workspaceId: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.reports.trends(workspaceId, from, to);
+  }
+
+  @WorkspacePermission('dashboard:view')
   @Get('summary')
   summary(
     @Param('workspaceId') workspaceId: string,

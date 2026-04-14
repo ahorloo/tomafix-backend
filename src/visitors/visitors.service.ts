@@ -164,6 +164,8 @@ export class VisitorsService {
           checkedInByName: scannerName,
         },
       });
+      // Notify the resident who invited this visitor
+      this.notifyInviterCheckedIn(workspace, updated).catch(() => {});
       return { action: 'CHECKED_IN', visitor: updated };
     }
 
@@ -177,6 +179,8 @@ export class VisitorsService {
           checkedOutByName: scannerName,
         },
       });
+      // Notify the resident who invited this visitor
+      this.notifyInviterCheckedOut(workspace, updated).catch(() => {});
       return { action: 'CHECKED_OUT', visitor: updated };
     }
 
@@ -301,8 +305,8 @@ export class VisitorsService {
   }
 
   async manualCheckIn(workspaceId: string, visitorId: string, userId: string, role: string) {
-    const isAdmin = role === 'OWNER_ADMIN' || role === 'MANAGER';
-    if (!isAdmin) throw new BadRequestException('Only admins can manually check in visitors');
+    const canAct = role === 'OWNER_ADMIN' || role === 'MANAGER' || role === 'GUARD';
+    if (!canAct) throw new BadRequestException('Only admins and guards can manually check in visitors');
     const workspace = await this.getWorkspace(workspaceId);
     const repo = this.visitorDelegate(workspace.templateType);
     const visitor = await repo.findFirst({ where: { id: visitorId, workspaceId } });
@@ -311,11 +315,12 @@ export class VisitorsService {
       throw new BadRequestException('Only expected visitors can be checked in');
     }
     const user = userId ? await this.prisma.user.findUnique({ where: { id: userId }, select: { fullName: true, email: true } }) : null;
-    const checkerName = user?.fullName || user?.email || 'Admin';
+    const checkerName = user?.fullName || user?.email || 'Guard';
     const updated = await repo.update({
       where: { id: visitorId },
       data: { status: VisitorStatus.CHECKED_IN, checkedInAt: new Date(), checkedInByName: checkerName },
     });
+    this.notifyInviterCheckedIn(workspace, updated).catch(() => {});
     return { action: 'CHECKED_IN', visitor: updated };
   }
 
@@ -328,12 +333,50 @@ export class VisitorsService {
       throw new BadRequestException('Only checked-in visitors can be checked out');
     }
     const user = userId ? await this.prisma.user.findUnique({ where: { id: userId }, select: { fullName: true, email: true } }) : null;
-    const checkerName = user?.fullName || user?.email || 'Admin';
+    const checkerName = user?.fullName || user?.email || 'Guard';
     const updated = await repo.update({
       where: { id: visitorId },
       data: { status: VisitorStatus.CHECKED_OUT, checkedOutAt: new Date(), checkedOutByName: checkerName },
     });
+    this.notifyInviterCheckedOut(workspace, updated).catch(() => {});
     return { action: 'CHECKED_OUT', visitor: updated };
+  }
+
+  private async notifyInviterCheckedIn(workspace: { id: string; name: string }, visitor: any) {
+    if (!visitor.invitedByUserId) return;
+    const inviter = await this.prisma.user.findUnique({
+      where: { id: visitor.invitedByUserId },
+      select: { email: true, fullName: true },
+    });
+    if (!inviter?.email) return;
+    this.mail.sendVisitorCheckedInEmail({
+      to: inviter.email,
+      inviterName: inviter.fullName || inviter.email,
+      visitorName: visitor.name,
+      purpose: visitor.purpose,
+      unitLabel: visitor.unitLabel ?? visitor.areaName ?? null,
+      checkedInAt: visitor.checkedInAt || new Date(),
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+    }).catch((e) => this.logger.warn(`Check-in notification failed: ${e?.message}`));
+  }
+
+  private async notifyInviterCheckedOut(workspace: { id: string; name: string }, visitor: any) {
+    if (!visitor.invitedByUserId) return;
+    const inviter = await this.prisma.user.findUnique({
+      where: { id: visitor.invitedByUserId },
+      select: { email: true, fullName: true },
+    });
+    if (!inviter?.email) return;
+    this.mail.sendVisitorCheckedOutEmail({
+      to: inviter.email,
+      inviterName: inviter.fullName || inviter.email,
+      visitorName: visitor.name,
+      checkedInAt: visitor.checkedInAt,
+      checkedOutAt: visitor.checkedOutAt || new Date(),
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+    }).catch((e) => this.logger.warn(`Check-out notification failed: ${e?.message}`));
   }
 
   async resendPass(workspaceId: string, visitorId: string) {

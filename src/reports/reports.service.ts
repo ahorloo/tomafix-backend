@@ -471,6 +471,73 @@ export class ReportsService {
     return lines.join('\n');
   }
 
+  async trends(workspaceId: string, from?: string, to?: string) {
+    const ws = await this.assertReportsWorkspace(workspaceId);
+    const fromDate = parseDate(from, 'start') ?? new Date(Date.now() - 30 * 86400000);
+    const toDate = parseDate(to, 'end') ?? new Date();
+
+    const isEstate = ws.templateType === TemplateType.ESTATE;
+    const isOffice = ws.templateType === TemplateType.OFFICE;
+
+    // Build daily buckets
+    const days: string[] = [];
+    const cursor = new Date(fromDate);
+    cursor.setHours(0, 0, 0, 0);
+    while (cursor <= toDate) {
+      days.push(cursor.toISOString().slice(0, 10));
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    // Fetch all relevant records created in range
+    const [requestRows, visitorRows] = await Promise.all([
+      isEstate
+        ? this.prisma.estateRequest.findMany({
+            where: { workspaceId, createdAt: { gte: fromDate, lte: toDate } },
+            select: { createdAt: true, status: true },
+          })
+        : isOffice
+          ? this.prisma.officeRequest.findMany({
+              where: { workspaceId, createdAt: { gte: fromDate, lte: toDate } },
+              select: { createdAt: true, status: true },
+            })
+          : this.prisma.apartmentRequest.findMany({
+              where: { workspaceId, createdAt: { gte: fromDate, lte: toDate } },
+              select: { createdAt: true, status: true },
+            }),
+      isEstate
+        ? this.prisma.estateVisitor.findMany({
+            where: { workspaceId, createdAt: { gte: fromDate, lte: toDate } },
+            select: { createdAt: true, status: true },
+          }).catch(() => [])
+        : isOffice
+          ? this.prisma.officeVisitor.findMany({
+              where: { workspaceId, createdAt: { gte: fromDate, lte: toDate } },
+              select: { createdAt: true, status: true },
+            }).catch(() => [])
+          : this.prisma.apartmentVisitor.findMany({
+              where: { workspaceId, createdAt: { gte: fromDate, lte: toDate } },
+              select: { createdAt: true, status: true },
+            }).catch(() => []),
+    ]);
+
+    const reqByDay = new Map<string, number>();
+    const visitByDay = new Map<string, number>();
+    for (const r of requestRows) {
+      const d = r.createdAt.toISOString().slice(0, 10);
+      reqByDay.set(d, (reqByDay.get(d) ?? 0) + 1);
+    }
+    for (const v of visitorRows as any[]) {
+      const d = v.createdAt.toISOString().slice(0, 10);
+      visitByDay.set(d, (visitByDay.get(d) ?? 0) + 1);
+    }
+
+    return days.map((date) => ({
+      date,
+      requests: reqByDay.get(date) ?? 0,
+      visitors: visitByDay.get(date) ?? 0,
+    }));
+  }
+
   async exportNoticesCsv(workspaceId: string, estateId?: string) {
     const ws = await this.assertReportsWorkspace(workspaceId);
     if (ws.templateType === TemplateType.OFFICE) {

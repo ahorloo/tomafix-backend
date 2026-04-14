@@ -1,7 +1,8 @@
-import { Injectable, UnauthorizedException, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { TemplateType } from '@prisma/client';
 import * as crypto from 'crypto';
+import { MailService } from '../mail/mail.service';
 
 // Simple password hashing using Node's built-in crypto (no bcrypt dep needed)
 function hashPassword(password: string): string {
@@ -37,7 +38,11 @@ function addDays(date: Date, days: number) {
 
 @Injectable()
 export class AdminService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(AdminService.name);
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mail: MailService,
+  ) {}
 
   private getAdminAppUrl() {
     return (
@@ -1164,5 +1169,94 @@ export class AdminService {
     } catch (err) {
       console.error('[ADMIN RESET] Email send failed:', err);
     }
+  }
+
+  // ── Broadcasts ────────────────────────────────────────────────────────────
+
+  async listBroadcasts() {
+    try {
+      return await (this.prisma as any).adminBroadcast.findMany({
+        orderBy: { sentAt: 'desc' },
+        take: 50,
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  async sendBroadcast(senderId: string, dto: {
+    subject: string;
+    body: string;
+    audience: 'WORKSPACE_OWNERS' | 'ALL_USERS' | 'TEST';
+    testEmail?: string;
+  }) {
+    const { subject, body, audience, testEmail } = dto;
+    if (!subject?.trim()) throw new BadRequestException('Subject is required');
+    if (!body?.trim()) throw new BadRequestException('Body is required');
+
+    let recipients: Array<{ email: string; name: string }> = [];
+
+    if (audience === 'TEST') {
+      if (!testEmail?.trim()) throw new BadRequestException('Test email is required for TEST audience');
+      recipients = [{ email: testEmail.trim(), name: 'Test Recipient' }];
+    } else if (audience === 'WORKSPACE_OWNERS') {
+      const members = await this.prisma.workspaceMember.findMany({
+        where: { role: 'OWNER_ADMIN' },
+        include: { user: { select: { email: true, fullName: true } } },
+        distinct: ['userId'],
+      });
+      recipients = members
+        .filter((m) => m.user?.email)
+        .map((m) => ({ email: m.user.email!, name: m.user.fullName || m.user.email! }));
+    } else {
+      // ALL_USERS
+      const users = await this.prisma.user.findMany({
+        where: { email: { not: null } },
+        select: { email: true, fullName: true },
+        take: 1000,
+      });
+      recipients = users
+        .filter((u) => u.email)
+        .map((u) => ({ email: u.email!, name: u.fullName || u.email! }));
+    }
+
+    if (recipients.length === 0) {
+      throw new BadRequestException('No recipients found for this audience');
+    }
+
+    // Send emails (fire-and-forget per recipient)
+    let sent = 0;
+    let failed = 0;
+    for (const r of recipients) {
+      try {
+        await this.mail.send(
+          r.email,
+          subject,
+          `<p>Hi ${r.name},</p>${body}<p style="margin-top:24px;font-size:12px;color:rgba(230,237,246,0.5);">This is a platform message from the TomaFix team.</p>`,
+        );
+        sent++;
+      } catch {
+        failed++;
+      }
+    }
+
+    // Store broadcast record if model exists
+    try {
+      await (this.prisma as any).adminBroadcast.create({
+        data: {
+          subject,
+          body,
+          audience,
+          sentByAdminId: senderId,
+          recipientCount: recipients.length,
+          sentCount: sent,
+          failedCount: failed,
+        },
+      });
+    } catch {
+      // Table may not exist yet — don't fail the send
+    }
+
+    return { ok: true, recipientCount: recipients.length, sent, failed };
   }
 }

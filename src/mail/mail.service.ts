@@ -304,6 +304,59 @@ export class MailService {
     );
   }
 
+  sendVisitorCheckedInEmail(args: {
+    to: string;
+    inviterName: string;
+    visitorName: string;
+    purpose?: string | null;
+    unitLabel?: string | null;
+    checkedInAt: Date;
+    workspaceId: string;
+    workspaceName: string;
+  }) {
+    const purpose = args.purpose ? `<p><strong>Purpose:</strong> ${args.purpose}</p>` : '';
+    const unit = args.unitLabel ? `<p><strong>Unit:</strong> ${args.unitLabel}</p>` : '';
+    const time = args.checkedInAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return this.send(
+      args.to,
+      `✅ ${args.visitorName} has arrived at ${args.workspaceName}`,
+      `<p>Hi ${args.inviterName},</p>
+       <p>Your visitor <strong>${args.visitorName}</strong> just checked in at <strong>${time}</strong>.</p>
+       ${purpose}${unit}
+       <p><a href="${this.getAppUrl()}/app/${args.workspaceId}/visitors">View Visitors</a></p>
+       <p>— TomaFix</p>`,
+    );
+  }
+
+  sendVisitorCheckedOutEmail(args: {
+    to: string;
+    inviterName: string;
+    visitorName: string;
+    checkedInAt?: Date | null;
+    checkedOutAt: Date;
+    workspaceId: string;
+    workspaceName: string;
+  }) {
+    let durationText = '';
+    if (args.checkedInAt) {
+      const ms = args.checkedOutAt.getTime() - new Date(args.checkedInAt).getTime();
+      const mins = Math.floor(ms / 60000);
+      durationText = mins < 60
+        ? `<p><strong>Duration:</strong> ${mins} minute${mins !== 1 ? 's' : ''}</p>`
+        : `<p><strong>Duration:</strong> ${Math.floor(mins / 60)}h ${mins % 60}m</p>`;
+    }
+    const time = args.checkedOutAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return this.send(
+      args.to,
+      `👋 ${args.visitorName} has left ${args.workspaceName}`,
+      `<p>Hi ${args.inviterName},</p>
+       <p>Your visitor <strong>${args.visitorName}</strong> checked out at <strong>${time}</strong>.</p>
+       ${durationText}
+       <p><a href="${this.getAppUrl()}/app/${args.workspaceId}/visitors">View Visitors</a></p>
+       <p>— TomaFix</p>`,
+    );
+  }
+
   sendSlackNotification(webhookUrl: string, text: string) {
     // Inline fetch for Slack
     return fetch(webhookUrl, {

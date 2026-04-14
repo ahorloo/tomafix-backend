@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
 import { AdminGuard } from './admin.guard';
 import { AdminRoles } from './admin-roles.decorator';
 import { AdminService } from './admin.service';
@@ -220,5 +220,25 @@ export class AdminController {
     @Req() req: any,
   ) {
     return this.adminService.updateAdminUser(id, req.adminUser.id, req.adminUser.email, body);
+  }
+
+  // ── Broadcasts ────────────────────────────────────────────────────────────
+
+  @Get('broadcasts')
+  @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'OPS_ADMIN', 'CONTENT_ADMIN')
+  listBroadcasts() {
+    return this.adminService.listBroadcasts();
+  }
+
+  @Post('broadcasts/send')
+  @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'OPS_ADMIN', 'CONTENT_ADMIN')
+  @HttpCode(HttpStatus.OK)
+  sendBroadcast(
+    @Body() body: { subject: string; body: string; audience: 'WORKSPACE_OWNERS' | 'ALL_USERS' | 'TEST'; testEmail?: string },
+    @Req() req: any,
+  ) {
+    return this.adminService.sendBroadcast(req.adminUser.id, body);
   }
 }
