@@ -1174,14 +1174,10 @@ export class AdminService {
   // ── Broadcasts ────────────────────────────────────────────────────────────
 
   async listBroadcasts() {
-    try {
-      return await (this.prisma as any).adminBroadcast.findMany({
-        orderBy: { sentAt: 'desc' },
-        take: 50,
-      });
-    } catch {
-      return [];
-    }
+    return this.prisma.adminBroadcast.findMany({
+      orderBy: { sentAt: 'desc' },
+      take: 50,
+    });
   }
 
   async sendBroadcast(senderId: string, dto: {
@@ -1240,22 +1236,18 @@ export class AdminService {
       }
     }
 
-    // Store broadcast record if model exists
-    try {
-      await (this.prisma as any).adminBroadcast.create({
-        data: {
-          subject,
-          body,
-          audience,
-          sentByAdminId: senderId,
-          recipientCount: recipients.length,
-          sentCount: sent,
-          failedCount: failed,
-        },
-      });
-    } catch {
-      // Table may not exist yet — don't fail the send
-    }
+    // Store broadcast record
+    await this.prisma.adminBroadcast.create({
+      data: {
+        subject,
+        body,
+        audience,
+        sentByAdminId: senderId,
+        recipientCount: recipients.length,
+        sentCount: sent,
+        failedCount: failed,
+      },
+    });
 
     return { ok: true, recipientCount: recipients.length, sent, failed };
   }

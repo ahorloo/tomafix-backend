@@ -1888,9 +1888,10 @@ model AdminUser {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  sessions  AdminSession[]
+  sessions    AdminSession[]
   resetTokens AdminPasswordResetToken[]
-  auditLogs AdminAuditLog[]
+  auditLogs   AdminAuditLog[]
+  broadcasts  AdminBroadcast[]
 
   @@index([email])
   @@index([role])
@@ -1943,6 +1944,23 @@ model AdminAuditLog {
   @@index([adminUserId])
   @@index([action])
   @@index([createdAt])
+}
+
+model AdminBroadcast {
+  id             String   @id @default(cuid())
+  subject        String
+  body           String   @db.Text
+  audience       String   // WORKSPACE_OWNERS | ALL_USERS | TEST
+  sentByAdminId  String
+  recipientCount Int      @default(0)
+  sentCount      Int      @default(0)
+  failedCount    Int      @default(0)
+  sentAt         DateTime @default(now())
+
+  sentByAdmin AdminUser @relation(fields: [sentByAdminId], references: [id], onDelete: Cascade)
+
+  @@index([sentByAdminId])
+  @@index([sentAt])
 }
 
 // ── Visitor Management ─────────────────────────────────────────────────────────
