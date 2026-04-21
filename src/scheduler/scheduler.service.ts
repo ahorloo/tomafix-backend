@@ -477,4 +477,101 @@ export class SchedulerService {
       }
     }
   }
+
+  // ── Subscription Expiry Reminders — runs daily at 8:00 AM ─────────────────
+  @Cron('0 8 * * *')
+  async checkSubscriptionExpiry() {
+    this.logger.log('[Subscription Cron] Checking for expiring/expired subscriptions...');
+
+    const now = new Date();
+
+    // Remind at 7 days, 3 days, and 1 day before expiry
+    const REMINDER_DAYS = [7, 3, 1];
+
+    for (const daysLeft of REMINDER_DAYS) {
+      // Window: subscriptions expiring within [daysLeft - 0.5, daysLeft + 0.5] days
+      const windowStart = new Date(now.getTime() + (daysLeft - 0.5) * 24 * 60 * 60 * 1000);
+      const windowEnd   = new Date(now.getTime() + (daysLeft + 0.5) * 24 * 60 * 60 * 1000);
+
+      const expiringSubs = await this.prisma.subscription.findMany({
+        where: {
+          status: 'ACTIVE',
+          currentPeriodEnd: { gte: windowStart, lte: windowEnd },
+        },
+        include: {
+          workspace: {
+            include: { owner: { select: { email: true, fullName: true } } },
+          },
+        },
+      });
+
+      for (const sub of expiringSubs) {
+        const ws = sub.workspace;
+        const ownerEmail = ws?.owner?.email;
+        const ownerName  = ws?.owner?.fullName || 'there';
+        const planName   = ws?.planName || 'your plan';
+
+        if (!ownerEmail || !ws) continue;
+
+        try {
+          await this.mail.sendSubscriptionExpiringEmail({
+            to: ownerEmail,
+            ownerName,
+            workspaceName: ws.name,
+            workspaceId: ws.id,
+            planName,
+            daysLeft,
+            expiresAt: sub.currentPeriodEnd!,
+          });
+          this.logger.log(`[Subscription Cron] Sent ${daysLeft}-day expiry warning to ${ownerEmail} for workspace ${ws.name}`);
+        } catch (e: any) {
+          this.logger.warn(`[Subscription Cron] Failed to send expiry email to ${ownerEmail}: ${e?.message}`);
+        }
+      }
+    }
+
+    // Also notify workspaces whose subscription expired in the last 24 hours
+    const expiredWindowStart = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const recentlyExpired = await this.prisma.subscription.findMany({
+      where: {
+        status: 'ACTIVE',
+        currentPeriodEnd: { gte: expiredWindowStart, lte: now },
+      },
+      include: {
+        workspace: {
+          include: { owner: { select: { email: true, fullName: true } } },
+        },
+      },
+    });
+
+    for (const sub of recentlyExpired) {
+      const ws = sub.workspace;
+      const ownerEmail = ws?.owner?.email;
+      const ownerName  = ws?.owner?.fullName || 'there';
+      const planName   = ws?.planName || 'your plan';
+
+      if (!ownerEmail || !ws) continue;
+
+      // Mark subscription as PAST_DUE
+      await this.prisma.subscription.update({
+        where: { id: sub.id },
+        data: { status: 'PAST_DUE' },
+      }).catch(() => {});
+
+      try {
+        await this.mail.sendSubscriptionExpiredEmail({
+          to: ownerEmail,
+          ownerName,
+          workspaceName: ws.name,
+          workspaceId: ws.id,
+          planName,
+        });
+        this.logger.log(`[Subscription Cron] Sent expiry notification to ${ownerEmail} for workspace ${ws.name}`);
+      } catch (e: any) {
+        this.logger.warn(`[Subscription Cron] Failed to send expired email to ${ownerEmail}: ${e?.message}`);
+      }
+    }
+
+    this.logger.log('[Subscription Cron] Done.');
+  }
 }

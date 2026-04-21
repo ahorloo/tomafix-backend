@@ -357,6 +357,72 @@ export class MailService {
     );
   }
 
+  // ── Subscription Expiry Emails ────────────────────────────────────────────
+
+  sendSubscriptionExpiringEmail(args: {
+    to: string;
+    ownerName: string;
+    workspaceName: string;
+    workspaceId: string;
+    planName: string;
+    daysLeft: number;
+    expiresAt: Date;
+  }) {
+    const formattedDate = args.expiresAt.toLocaleDateString('en-GB', {
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    });
+    const urgencyColour = args.daysLeft <= 1 ? '#dc2626' : args.daysLeft <= 3 ? '#f97316' : '#fbbf24';
+    const urgencyText = args.daysLeft === 1 ? 'EXPIRES TOMORROW' : `${args.daysLeft} DAYS LEFT`;
+
+    return this.send(
+      args.to,
+      `⚠️ Your TomaFix subscription expires in ${args.daysLeft} day${args.daysLeft !== 1 ? 's' : ''} — ${args.workspaceName}`,
+      `<p>Hi ${args.ownerName},</p>
+       <p>This is a friendly reminder that your <strong>${args.planName}</strong> subscription for <strong>${args.workspaceName}</strong> is expiring soon.</p>
+       <div style="background:rgba(251,191,36,0.1);border:1px solid ${urgencyColour};border-radius:8px;padding:16px;margin:16px 0;text-align:center;">
+         <p style="color:${urgencyColour};font-size:18px;font-weight:bold;margin:0;">${urgencyText}</p>
+         <p style="color:rgba(255,255,255,0.7);margin:4px 0 0;">Expires on ${formattedDate}</p>
+       </div>
+       <p>To keep your workspace active and avoid any interruption to your services, please renew your subscription before it expires.</p>
+       <p style="text-align:center;margin:24px 0;">
+         <a href="${this.getAppUrl()}/app/${args.workspaceId}/billing"
+            style="background:#e8943a;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;">
+           Renew Subscription Now
+         </a>
+       </p>
+       <p style="font-size:12px;color:rgba(230,237,246,0.5);">If you have already renewed, please disregard this email. Contact support if you need assistance.</p>
+       <p>— The TomaFix Team</p>`,
+    );
+  }
+
+  sendSubscriptionExpiredEmail(args: {
+    to: string;
+    ownerName: string;
+    workspaceName: string;
+    workspaceId: string;
+    planName: string;
+  }) {
+    return this.send(
+      args.to,
+      `🔴 Your TomaFix subscription has expired — ${args.workspaceName}`,
+      `<p>Hi ${args.ownerName},</p>
+       <p>Your <strong>${args.planName}</strong> subscription for <strong>${args.workspaceName}</strong> has expired.</p>
+       <div style="background:rgba(220,38,38,0.1);border:1px solid #dc2626;border-radius:8px;padding:16px;margin:16px 0;text-align:center;">
+         <p style="color:#dc2626;font-size:18px;font-weight:bold;margin:0;">SUBSCRIPTION EXPIRED</p>
+         <p style="color:rgba(255,255,255,0.7);margin:4px 0 0;">Your workspace features may be limited until you renew.</p>
+       </div>
+       <p>Renew today to restore full access to all your TomaFix features including work order management, visitor management, estate operations, and reports.</p>
+       <p style="text-align:center;margin:24px 0;">
+         <a href="${this.getAppUrl()}/app/${args.workspaceId}/billing"
+            style="background:#e8943a;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;">
+           Renew Now — Restore Full Access
+         </a>
+       </p>
+       <p style="font-size:12px;color:rgba(230,237,246,0.5);">Need help? Reply to this email or contact our support team.</p>
+       <p>— The TomaFix Team</p>`,
+    );
+  }
+
   sendSlackNotification(webhookUrl: string, text: string) {
     // Inline fetch for Slack
     return fetch(webhookUrl, {
