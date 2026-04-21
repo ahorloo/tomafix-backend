@@ -48,7 +48,7 @@ export class AdminService {
   private getAdminAppUrl() {
     return (
       process.env.ADMIN_APP_URL ||
-      (process.env.NODE_ENV === 'production' ? 'https://admin.tomafix.com' : 'http://localhost:5175')
+      (process.env.NODE_ENV === 'production' ? 'https://yonick.tomafix.com' : 'http://localhost:5175')
     );
   }
 

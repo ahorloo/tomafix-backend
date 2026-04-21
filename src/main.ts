@@ -39,8 +39,7 @@ function parseCorsOrigins(): string[] {
   const defaultOrigins = [
     'https://tomafix.com',
     'https://www.tomafix.com',
-    'https://admin.tomafix.com',
-    'https://admin.www.tomafix.com',
+    'https://yonick.tomafix.com',
   ];
 
   const addOrigin = (value?: string | null) => {
