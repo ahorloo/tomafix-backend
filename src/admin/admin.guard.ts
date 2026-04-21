@@ -1,6 +1,7 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { PrismaService } from '../prisma/prisma.service';
+import { isAdminEmailAllowed } from './admin-auth.util';
 
 export const ADMIN_ROLES_KEY = 'adminRoles';
 
@@ -33,6 +34,10 @@ export class AdminGuard implements CanActivate {
 
     if (!session.admin.isActive) {
       throw new ForbiddenException('Admin account is inactive');
+    }
+
+    if (!isAdminEmailAllowed(session.admin.email)) {
+      throw new ForbiddenException('Admin email is not allowed');
     }
 
     req.adminUser = session.admin;

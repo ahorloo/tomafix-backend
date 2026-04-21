@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TemplateType } from '@prisma/client';
 import * as crypto from 'crypto';
 import { MailService } from '../mail/mail.service';
+import { isAdminEmailAllowed } from './admin-auth.util';
 
 // Simple password hashing using Node's built-in crypto (no bcrypt dep needed)
 function hashPassword(password: string): string {
@@ -106,8 +107,10 @@ export class AdminService {
   // ── Auth ──────────────────────────────────────────────────────────────────
 
   async login(email: string, password: string) {
-    const admin = await this.prisma.adminUser.findUnique({ where: { email: email.toLowerCase() } });
+    const normalizedEmail = email.trim().toLowerCase();
+    const admin = await this.prisma.adminUser.findUnique({ where: { email: normalizedEmail } });
     if (!admin || !admin.isActive) throw new UnauthorizedException('Invalid credentials');
+    if (!isAdminEmailAllowed(normalizedEmail)) throw new UnauthorizedException('Admin email is not allowed');
 
     const hash = hashPassword(password);
     if (hash !== admin.passwordHash) throw new UnauthorizedException('Invalid credentials');
@@ -215,6 +218,7 @@ export class AdminService {
     if (!session.otpHash || !session.otpExpiresAt) throw new UnauthorizedException('No OTP pending');
     if (session.otpExpiresAt < new Date()) throw new UnauthorizedException('OTP has expired. Please sign in again.');
     if (!session.admin.isActive) throw new UnauthorizedException('Admin account is inactive');
+    if (!isAdminEmailAllowed(session.admin.email)) throw new UnauthorizedException('Admin email is not allowed');
 
     const valid = this.verifyAdminOtpHash(code.trim(), session.otpHash);
     if (!valid) throw new UnauthorizedException('Incorrect verification code');
@@ -1007,12 +1011,16 @@ export class AdminService {
 
   async createAdminUser(email: string, fullName: string, password: string, role: string) {
     assertAdminRole(role);
-    const existing = await this.prisma.adminUser.findUnique({ where: { email: email.toLowerCase() } });
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!isAdminEmailAllowed(normalizedEmail)) {
+      throw new BadRequestException('Email is not in the allowed admin email list');
+    }
+    const existing = await this.prisma.adminUser.findUnique({ where: { email: normalizedEmail } });
     if (existing) throw new BadRequestException('Admin with this email already exists');
 
     return this.prisma.adminUser.create({
       data: {
-        email: email.toLowerCase(),
+        email: normalizedEmail,
         fullName,
         passwordHash: hashPassword(password),
         role,
