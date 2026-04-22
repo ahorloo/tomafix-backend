@@ -666,9 +666,23 @@ export class AdminService {
     const workspace = await this.prisma.workspace.findUnique({ where: { id } });
     if (!workspace) throw new NotFoundException('Workspace not found');
 
+    // Find the most recent active subscription to set a valid nextRenewal.
+    // If none found, clear nextRenewal so the WorkspaceAccessGuard won't
+    // immediately re-expire the workspace on the next request.
+    const activeSub = await this.prisma.subscription.findFirst({
+      where: { workspaceId: id, status: { in: ['ACTIVE', 'TRIAL'] } },
+      orderBy: { currentPeriodEnd: 'desc' },
+    });
+
+    const nextRenewal = activeSub?.currentPeriodEnd ?? null;
+
     const updated = await this.prisma.workspace.update({
       where: { id },
-      data: { status: 'ACTIVE' },
+      data: {
+        status: 'ACTIVE',
+        billingStatus: 'ACTIVE',
+        nextRenewal,
+      },
     });
 
     await this.audit(adminId, adminEmail, 'workspace.activate', 'Workspace', id, { previous: workspace.status });
@@ -681,7 +695,7 @@ export class AdminService {
 
     const updated = await this.prisma.workspace.update({
       where: { id },
-      data: { status: 'SUSPENDED' },
+      data: { status: 'SUSPENDED', billingStatus: 'SUSPENDED' },
     });
 
     await this.audit(adminId, adminEmail, 'workspace.suspend', 'Workspace', id, { previous: workspace.status });
@@ -702,15 +716,30 @@ export class AdminService {
   async updateWorkspaceOwnerPhone(id: string, adminId: string, adminEmail: string, phone: string) {
     const workspace = await this.prisma.workspace.findUnique({
       where: { id },
-      select: { id: true, ownerUserId: true, owner: { select: { phone: true, fullName: true, email: true } } },
+      select: { id: true, ownerUserId: true, owner: { select: { id: true, phone: true, fullName: true, email: true } } },
     });
     if (!workspace) throw new NotFoundException('Workspace not found');
-    if (!workspace.ownerUserId) throw new BadRequestException('Workspace owner missing');
+    if (!workspace.ownerUserId) throw new BadRequestException('Workspace owner not linked');
 
-    const normalizedPhone = String(phone || '').trim();
+    const normalizedPhone = String(phone || '').trim() || null;
+
+    // If the phone is already assigned to a different user, strip it from them first
+    if (normalizedPhone) {
+      const conflicting = await this.prisma.user.findUnique({
+        where: { phone: normalizedPhone },
+        select: { id: true },
+      });
+      if (conflicting && conflicting.id !== workspace.ownerUserId) {
+        await this.prisma.user.update({
+          where: { id: conflicting.id },
+          data: { phone: null },
+        });
+      }
+    }
+
     const updated = await this.prisma.user.update({
       where: { id: workspace.ownerUserId },
-      data: { phone: normalizedPhone || null },
+      data: { phone: normalizedPhone },
       select: { id: true, email: true, fullName: true, phone: true },
     });
 
@@ -765,17 +794,41 @@ export class AdminService {
     const workspace = await this.prisma.workspace.findUnique({ where: { id } });
     if (!workspace) throw new NotFoundException('Workspace not found');
 
-    // Mark most recent PENDING/FAILED payment as PAID and activate workspace
-    await this.prisma.$transaction([
-      this.prisma.payment.updateMany({
+    // Find the most recent subscription so we can set a valid renewal date.
+    const latestSub = await this.prisma.subscription.findFirst({
+      where: { workspaceId: id },
+      orderBy: { currentPeriodEnd: 'desc' },
+    });
+
+    // Extend renewal: use the subscription period end if available,
+    // otherwise grant 30 days from now as a manual grace period.
+    const now = new Date();
+    const nextRenewal =
+      latestSub?.currentPeriodEnd && latestSub.currentPeriodEnd > now
+        ? latestSub.currentPeriodEnd
+        : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    await this.prisma.$transaction(async (tx) => {
+      // Mark pending/failed payments as PAID
+      await tx.payment.updateMany({
         where: { workspaceId: id, status: { in: ['PENDING', 'FAILED'] } },
-        data: { status: 'PAID', paidAt: new Date() },
-      }),
-      this.prisma.workspace.update({
+        data: { status: 'PAID', paidAt: now },
+      });
+
+      // Activate the workspace and clear billing issues
+      await tx.workspace.update({
         where: { id },
-        data: { status: 'ACTIVE' },
-      }),
-    ]);
+        data: { status: 'ACTIVE', billingStatus: 'ACTIVE', nextRenewal },
+      });
+
+      // Also mark the subscription as ACTIVE if it was PAST_DUE or CANCELED
+      if (latestSub && latestSub.status !== 'ACTIVE' && latestSub.status !== 'TRIAL') {
+        await tx.subscription.update({
+          where: { id: latestSub.id },
+          data: { status: 'ACTIVE', currentPeriodEnd: nextRenewal },
+        });
+      }
+    });
 
     await this.audit(adminId, adminEmail, 'workspace.fix_payment', 'Workspace', id);
     return { ok: true };

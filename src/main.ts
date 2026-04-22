@@ -40,6 +40,8 @@ function parseCorsOrigins(): string[] {
     'https://tomafix.com',
     'https://www.tomafix.com',
     'https://yonick.tomafix.com',
+    'https://admin.tomafix.com',
+    'https://admin.www.tomafix.com',
   ];
 
   const addOrigin = (value?: string | null) => {
