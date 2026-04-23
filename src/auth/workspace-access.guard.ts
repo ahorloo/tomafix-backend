@@ -49,31 +49,42 @@ export class WorkspaceAccessGuard implements CanActivate {
       return true;
     }
 
+    const GRACE_PERIOD_DAYS = 5;
     const path = `${req.baseUrl || ''}${req.path || ''}`.replace(/\\/g, '/');
     const workspace: any = membership.workspace || {};
     const renewalAt = workspace?.nextRenewal ? new Date(workspace.nextRenewal) : null;
-    const shouldExpireForBilling =
+    const now = Date.now();
+    const isExpiredActive =
       !!renewalAt &&
       Number.isFinite(renewalAt.getTime()) &&
-      renewalAt.getTime() <= Date.now() &&
+      renewalAt.getTime() <= now &&
       workspace.status === WorkspaceStatus.ACTIVE;
 
-    if (shouldExpireForBilling) {
-      const updated = await this.prisma.workspace.update({
-        where: { id: workspaceId },
-        data: {
-          status: WorkspaceStatus.PENDING_PAYMENT,
-          billingStatus:
-            workspace.billingStatus === BillingStatus.CANCELLED
-              ? BillingStatus.CANCELLED
-              : BillingStatus.PAST_DUE,
-        },
-        select: { status: true, billingStatus: true, nextRenewal: true },
-      });
+    if (isExpiredActive) {
+      const msOverdue = now - renewalAt.getTime();
+      const daysOverdue = msOverdue / (1000 * 60 * 60 * 24);
 
-      workspace.status = updated.status;
-      workspace.billingStatus = updated.billingStatus;
-      workspace.nextRenewal = updated.nextRenewal;
+      if (daysOverdue <= GRACE_PERIOD_DAYS) {
+        const daysLeft = Math.max(1, Math.ceil(GRACE_PERIOD_DAYS - daysOverdue));
+        const gracePeriodEndsAt = new Date(renewalAt.getTime() + GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
+        (membership as any).billingGrace = { daysLeft, gracePeriodEndsAt };
+      } else {
+        const updated = await this.prisma.workspace.update({
+          where: { id: workspaceId },
+          data: {
+            status: WorkspaceStatus.PENDING_PAYMENT,
+            billingStatus:
+              workspace.billingStatus === BillingStatus.CANCELLED
+                ? BillingStatus.CANCELLED
+                : BillingStatus.PAST_DUE,
+          },
+          select: { status: true, billingStatus: true, nextRenewal: true },
+        });
+
+        workspace.status = updated.status;
+        workspace.billingStatus = updated.billingStatus;
+        workspace.nextRenewal = updated.nextRenewal;
+      }
     }
 
     if (this.isLockedStatus(workspace.status) && !this.isBillingRoute(path)) {

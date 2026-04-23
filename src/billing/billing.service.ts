@@ -686,6 +686,24 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
 
     const latestSubscription = ws.subscriptions[0] || null;
 
+    const GRACE_PERIOD_DAYS = 5;
+    const nowMs = Date.now();
+    const nextRenewalDate = ws.nextRenewal ?? latestSubscription?.currentPeriodEnd ?? null;
+    let billingWarning: { daysLeft: number; gracePeriodEndsAt: Date } | null = null;
+
+    if (nextRenewalDate && ws.status === 'ACTIVE') {
+      const renewalMs = new Date(nextRenewalDate).getTime();
+      if (renewalMs <= nowMs) {
+        const daysOverdue = (nowMs - renewalMs) / (1000 * 60 * 60 * 24);
+        if (daysOverdue <= GRACE_PERIOD_DAYS) {
+          billingWarning = {
+            daysLeft: Math.max(1, Math.ceil(GRACE_PERIOD_DAYS - daysOverdue)),
+            gracePeriodEndsAt: new Date(renewalMs + GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000),
+          };
+        }
+      }
+    }
+
     return {
       workspaceId: ws.id,
       id: ws.id,
@@ -693,12 +711,13 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       templateType: ws.templateType,
       workspaceStatus: ws.status,
       billingStatus: ws.billingStatus,
-      nextRenewal: ws.nextRenewal ?? latestSubscription?.currentPeriodEnd ?? null,
+      nextRenewal: nextRenewalDate,
       planName: latestSubscription?.plan?.name || ws.planName,
       latestSubscription,
       payments: ws.payments,
       timeline,
       dunning,
+      billingWarning,
     };
   }
 
