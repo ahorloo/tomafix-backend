@@ -718,7 +718,13 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       timeline,
       dunning,
       billingWarning,
-      isExistingSubscriber: !!latestSubscription,
+      // True when workspace has any sign of prior billing activity:
+      // a subscription record, a payment, a past-due billing status, or a renewal date set.
+      isExistingSubscriber:
+        !!latestSubscription ||
+        ws.payments.length > 0 ||
+        ws.billingStatus === BillingStatus.PAST_DUE ||
+        ws.nextRenewal !== null,
     };
   }
 
