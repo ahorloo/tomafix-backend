@@ -718,6 +718,7 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       timeline,
       dunning,
       billingWarning,
+      isExistingSubscriber: !!latestSubscription,
     };
   }
 
