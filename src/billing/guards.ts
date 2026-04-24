@@ -21,13 +21,21 @@ type GuardRule = GuardedMutation & { method: string; pattern: RegExp };
 
 // Map mutate endpoints (regex on full path)
 const GUARDED: GuardRule[] = [
+  // ── APARTMENT limits ─────────────────────────────────────────────────────
   { method: 'POST', pattern: /^\/workspaces\/[^/]+\/apartment\/estates$/, limit: 'properties' },
   { method: 'POST', pattern: /^\/workspaces\/[^/]+\/apartment\/units$/, limit: 'units' },
   { method: 'POST', pattern: /^\/workspaces\/[^/]+\/apartment\/residents$/, feature: 'staff' },
-  { method: 'POST', pattern: /^\/workspaces\/[^/]+\/office\/areas$/, limit: 'units' },
-  { method: 'POST', pattern: /^\/workspaces\/[^/]+\/office\/assets$/, limit: 'properties' },
+  // ── APARTMENT feature gates ───────────────────────────────────────────────
+  // Visitors (QR check-in/out) — Growth+ only
+  { method: 'POST', pattern: /^\/workspaces\/[^/]+\/visitors(?:$|\/)/, feature: 'visitors' },
+  // Inspections (apartment unit inspections) — Growth+ only
+  { method: 'POST', pattern: /^\/workspaces\/[^/]+\/operations\/inspections$/, feature: 'inspections' },
+  // Advanced reports + exports — TomaPrime only
   { method: 'POST', pattern: /^\/workspaces\/[^/]+\/apartment\/reports\/advanced$/, feature: 'advancedReports' },
   { method: 'POST', pattern: /^\/workspaces\/[^/]+\/apartment\/exports$/, feature: 'exports' },
+  // ── OFFICE limits ────────────────────────────────────────────────────────
+  { method: 'POST', pattern: /^\/workspaces\/[^/]+\/office\/areas$/, limit: 'units' },
+  { method: 'POST', pattern: /^\/workspaces\/[^/]+\/office\/assets$/, limit: 'properties' },
 ];
 
 @Injectable()

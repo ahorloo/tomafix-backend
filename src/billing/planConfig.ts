@@ -5,6 +5,9 @@ type PlanLimits = { properties: number; units: number; managers: number };
 type PlanFeatures = {
   blocks: boolean;
   staff: boolean;
+  visitors: boolean;
+  inspections: boolean;
+  assistant: boolean;
   requestTypes: boolean;
   preventiveMaintenance: boolean;
   leaderboard: boolean;
@@ -32,6 +35,9 @@ export const PLAN_MAP: Record<PlanName, PlanConfig> = {
     features: {
       blocks: false,
       staff: false,
+      visitors: false,
+      inspections: false,
+      assistant: false,
       requestTypes: false,
       preventiveMaintenance: false,
       leaderboard: false,
@@ -51,6 +57,9 @@ export const PLAN_MAP: Record<PlanName, PlanConfig> = {
     features: {
       blocks: true,
       staff: true,
+      visitors: false,
+      inspections: false,
+      assistant: false,
       requestTypes: false,
       preventiveMaintenance: false,
       leaderboard: false,
@@ -69,6 +78,9 @@ export const PLAN_MAP: Record<PlanName, PlanConfig> = {
     features: {
       blocks: true,
       staff: true,
+      visitors: false,
+      inspections: false,
+      assistant: false,
       requestTypes: false,
       preventiveMaintenance: false,
       leaderboard: false,
@@ -91,6 +103,12 @@ const PLAN_ALIASES: Record<string, PlanName> = {
 };
 
 const TEMPLATE_LIMIT_OVERRIDES: Partial<Record<TemplateType, Record<PlanName, PlanLimits>>> = {
+  // APARTMENT: properties = buildings (always 1 per workspace), units = apartment units, managers = staff accounts
+  APARTMENT: {
+    Starter: { properties: 1, units: 25, managers: 2 },
+    Growth: { properties: 1, units: 120, managers: 8 },
+    TomaPrime: { properties: 1, units: 300, managers: 999 },
+  },
   ESTATE: {
     Starter: { properties: 2, units: 60, managers: 1 },
     Growth: { properties: 6, units: 220, managers: 3 },
@@ -118,6 +136,33 @@ const TEMPLATE_PRICE_OVERRIDES: Partial<Record<TemplateType, Record<PlanName, nu
 };
 
 const TEMPLATE_FEATURE_OVERRIDES: Partial<Record<TemplateType, Record<PlanName, Partial<PlanFeatures>>>> = {
+  // APARTMENT: gate visitors + inspections at Growth, FixMate AI (assistant) at TomaPrime
+  APARTMENT: {
+    Starter: {
+      staff: false,
+      visitors: false,
+      inspections: false,
+      assistant: false,
+      advancedReports: false,
+      exports: false,
+    },
+    Growth: {
+      staff: true,
+      visitors: true,
+      inspections: true,
+      assistant: false,
+      advancedReports: false,
+      exports: false,
+    },
+    TomaPrime: {
+      staff: true,
+      visitors: true,
+      inspections: true,
+      assistant: true,
+      advancedReports: true,
+      exports: true,
+    },
+  },
   OFFICE: {
     Starter: {
       staff: true,

@@ -12,6 +12,9 @@ export type BillingStatus =
 export type FeatureKey =
   | 'blocks'
   | 'staff'
+  | 'visitors'
+  | 'inspections'
+  | 'assistant'
   | 'requestTypes'
   | 'preventiveMaintenance'
   | 'leaderboard'

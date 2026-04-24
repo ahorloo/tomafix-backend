@@ -80,21 +80,38 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
     const templateCopy: Record<TemplateType, Record<string, { summary: string; priceText: string; bullets: string[]; amountPesewas: number }>> = {
       APARTMENT: {
         starter: {
-          summary: 'For small apartment buildings',
+          summary: 'For small apartment buildings getting started',
           priceText: 'GH₵ 99 / month',
-          bullets: ['1 building', 'Up to 20 units', 'Requests + residents management'],
+          bullets: [
+            'Up to 25 units',
+            'Dashboard, Units, Residents, Requests & Notices',
+            'Find Technicians (free on all plans)',
+            '2 staff accounts',
+          ],
           amountPesewas: 9900,
         },
         growth: {
-          summary: 'For growing apartments',
+          summary: 'For growing apartments that need more',
           priceText: 'GH₵ 199 / month',
-          bullets: ['Up to 3 blocks/properties', 'Up to 120 units', 'Staff + basic reports'],
+          bullets: [
+            'Up to 120 units',
+            'Everything in Starter',
+            'Visitors — QR check-in / check-out',
+            'Inspections',
+            'Up to 8 staff accounts',
+          ],
           amountPesewas: 19900,
         },
         tomaprime: {
-          summary: 'For large apartment operations',
+          summary: 'For large apartment operations at full scale',
           priceText: 'GH₵ 399 / month',
-          bullets: ['Up to 5 properties', 'Up to 250 units', 'Advanced reports + exports'],
+          bullets: [
+            'Up to 300 units',
+            'Everything in Growth',
+            'FixMate AI — smart maintenance assistant',
+            'Advanced Reports + Data Exports',
+            'Unlimited staff accounts',
+          ],
           amountPesewas: 39900,
         },
       },
