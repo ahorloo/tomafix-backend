@@ -26,6 +26,14 @@ export class PasskeyService {
     return process.env.WEBAUTHN_ORIGIN || 'http://localhost:5173';
   }
 
+  /** Accept both www and non-www variants of the origin */
+  private get allowedOrigins(): string[] {
+    const base = this.origin;
+    const withWww = base.replace(/^(https?:\/\/)(?!www\.)/, '$1www.');
+    const withoutWww = base.replace(/^(https?:\/\/)www\./, '$1');
+    return [...new Set([base, withWww, withoutWww])];
+  }
+
   // ── Registration ────────────────────────────────────────────────────────
 
   async getRegistrationOptions(userId: string) {
@@ -72,7 +80,7 @@ export class PasskeyService {
       verification = await verifyRegistrationResponse({
         response,
         expectedChallenge,
-        expectedOrigin: this.origin,
+        expectedOrigin: this.allowedOrigins,
         expectedRPID: this.rpID,
         requireUserVerification: true,
       });
@@ -161,7 +169,7 @@ export class PasskeyService {
       verification = await verifyAuthenticationResponse({
         response,
         expectedChallenge: storedChallenge,
-        expectedOrigin: this.origin,
+        expectedOrigin: this.allowedOrigins,
         expectedRPID: this.rpID,
         requireUserVerification: true,
         credential: {
