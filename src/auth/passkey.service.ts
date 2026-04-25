@@ -57,8 +57,7 @@ export class PasskeyService {
       excludeCredentials,
       authenticatorSelection: {
         residentKey: 'preferred',
-        userVerification: 'required',
-        authenticatorAttachment: 'platform', // device-only (Touch ID / Face ID / PIN)
+        userVerification: 'preferred', // 'required' silently blocks some iOS/Android browsers
       },
       attestationType: 'none',
     });
@@ -82,7 +81,7 @@ export class PasskeyService {
         expectedChallenge,
         expectedOrigin: this.allowedOrigins,
         expectedRPID: this.rpID,
-        requireUserVerification: true,
+        requireUserVerification: false,
       });
     } catch (err: any) {
       throw new BadRequestException(`Passkey setup failed: ${err?.message || 'Unknown error'}`);
@@ -127,7 +126,7 @@ export class PasskeyService {
   async getAuthenticationOptions() {
     const options = await generateAuthenticationOptions({
       rpID: this.rpID,
-      userVerification: 'required',
+      userVerification: 'preferred',
       // No allowCredentials → discoverable credential (user's device shows the picker)
     });
 
@@ -171,7 +170,7 @@ export class PasskeyService {
         expectedChallenge: storedChallenge,
         expectedOrigin: this.allowedOrigins,
         expectedRPID: this.rpID,
-        requireUserVerification: true,
+        requireUserVerification: false,
         credential: {
           id: passkeyRecord.credentialId,
           publicKey: new Uint8Array(passkeyRecord.publicKey),
