@@ -4,6 +4,7 @@ import { TemplateType } from '@prisma/client';
 import * as crypto from 'crypto';
 import { MailService } from '../mail/mail.service';
 import { isAdminEmailAllowed } from './admin-auth.util';
+import { cacheBust } from '../billing/cache';
 
 // Simple password hashing using Node's built-in crypto (no bcrypt dep needed)
 function hashPassword(password: string): string {
@@ -663,29 +664,43 @@ export class AdminService {
   }
 
   async activateWorkspace(id: string, adminId: string, adminEmail: string) {
-    const workspace = await this.prisma.workspace.findUnique({ where: { id } });
+    const workspace = await this.prisma.workspace.findUnique({
+      where: { id },
+      include: { owner: { select: { email: true, fullName: true } } },
+    });
     if (!workspace) throw new NotFoundException('Workspace not found');
 
-    // Find the most recent active subscription to set a valid nextRenewal.
-    // If none found, clear nextRenewal so the WorkspaceAccessGuard won't
-    // immediately re-expire the workspace on the next request.
+    // Only use a subscription's currentPeriodEnd if it is in the future.
+    // Using a past date would cause WorkspaceAccessGuard to immediately
+    // flip the workspace back to PENDING_PAYMENT on the next request.
     const activeSub = await this.prisma.subscription.findFirst({
       where: { workspaceId: id, status: { in: ['ACTIVE', 'TRIAL'] } },
       orderBy: { currentPeriodEnd: 'desc' },
     });
-
-    const nextRenewal = activeSub?.currentPeriodEnd ?? null;
+    const now = new Date();
+    const nextRenewal =
+      activeSub?.currentPeriodEnd && activeSub.currentPeriodEnd > now
+        ? activeSub.currentPeriodEnd
+        : null;
 
     const updated = await this.prisma.workspace.update({
       where: { id },
-      data: {
-        status: 'ACTIVE',
-        billingStatus: 'ACTIVE',
-        nextRenewal,
-      },
+      data: { status: 'ACTIVE', billingStatus: 'ACTIVE', nextRenewal },
     });
 
+    // Bust the entitlements cache so the next request picks up the new status
+    cacheBust(`billing:entitlements:${id}`);
+
     await this.audit(adminId, adminEmail, 'workspace.activate', 'Workspace', id, { previous: workspace.status });
+
+    // Notify the workspace owner by email
+    const ownerEmail = (workspace as any).owner?.email;
+    const ownerName = (workspace as any).owner?.fullName || 'there';
+    const workspaceName = (workspace as any).name || 'your workspace';
+    if (ownerEmail) {
+      this.mail.sendWorkspaceActivated(ownerEmail, ownerName, workspaceName, id).catch(() => {});
+    }
+
     return updated;
   }
 

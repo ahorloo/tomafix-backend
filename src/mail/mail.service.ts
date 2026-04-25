@@ -423,6 +423,33 @@ export class MailService {
     );
   }
 
+  sendWorkspaceActivated(email: string, ownerName: string, workspaceName: string, workspaceId: string) {
+    const appUrl = this.getAppUrl();
+    const dashboardUrl = `${appUrl}/workspaces/${workspaceId}`;
+    return this.send(
+      email,
+      `✅ Your workspace "${workspaceName}" has been activated`,
+      `
+        <h2 style="color:#e6edf6;margin:0 0 12px">Your workspace is active 🎉</h2>
+        <p>Hi ${ownerName},</p>
+        <p>
+          Good news — your <strong>${workspaceName}</strong> workspace has been manually
+          activated by the TomaFix team. You now have full access to your dashboard.
+        </p>
+        <p style="margin-top:18px;">
+          <a href="${dashboardUrl}"
+             style="display:inline-block;padding:12px 22px;background:linear-gradient(120deg,#E8943A,#f5b668);color:#080E1C;border-radius:10px;font-weight:800;text-decoration:none;font-size:14px;">
+            Go to my workspace →
+          </a>
+        </p>
+        <p style="font-size:12px;color:rgba(230,237,246,0.55);margin-top:18px;">
+          If you have any questions or need help getting started, reply to this email and we'll assist you.
+        </p>
+        <p>— The TomaFix Team</p>
+      `,
+    );
+  }
+
   sendSlackNotification(webhookUrl: string, text: string) {
     // Inline fetch for Slack
     return fetch(webhookUrl, {
