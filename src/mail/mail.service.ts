@@ -423,6 +423,51 @@ export class MailService {
     );
   }
 
+  sendNewTechnicianApplication(
+    adminEmail: string,
+    data: {
+      businessName: string;
+      contactPerson: string;
+      email: string;
+      phone: string;
+      serviceAreas: string;
+      categories: string[];
+      applicationId: string;
+    },
+  ) {
+    const appUrl = this.getAppUrl();
+    const reviewUrl = `${appUrl}/admin/technician-applications`;
+    return this.send(
+      adminEmail,
+      `📋 New technician application: ${data.businessName}`,
+      `
+        <h2 style="color:#e6edf6;margin:0 0 12px">New technician application received</h2>
+        <p>A new business has applied to join the TomaFix technician directory.</p>
+        <table style="border-collapse:collapse;width:100%;max-width:480px;margin:14px 0;">
+          <tr><td style="padding:8px 12px;border:1px solid rgba(230,237,246,0.12);color:rgba(230,237,246,0.55);font-size:12px;text-transform:uppercase;letter-spacing:0.1em;">Business</td>
+              <td style="padding:8px 12px;border:1px solid rgba(230,237,246,0.12);color:#e6edf6;font-weight:700;">${data.businessName}</td></tr>
+          <tr><td style="padding:8px 12px;border:1px solid rgba(230,237,246,0.12);color:rgba(230,237,246,0.55);font-size:12px;text-transform:uppercase;letter-spacing:0.1em;">Contact</td>
+              <td style="padding:8px 12px;border:1px solid rgba(230,237,246,0.12);color:#e6edf6;">${data.contactPerson}</td></tr>
+          <tr><td style="padding:8px 12px;border:1px solid rgba(230,237,246,0.12);color:rgba(230,237,246,0.55);font-size:12px;text-transform:uppercase;letter-spacing:0.1em;">Email</td>
+              <td style="padding:8px 12px;border:1px solid rgba(230,237,246,0.12);color:#e6edf6;">${data.email}</td></tr>
+          <tr><td style="padding:8px 12px;border:1px solid rgba(230,237,246,0.12);color:rgba(230,237,246,0.55);font-size:12px;text-transform:uppercase;letter-spacing:0.1em;">Phone</td>
+              <td style="padding:8px 12px;border:1px solid rgba(230,237,246,0.12);color:#e6edf6;">${data.phone}</td></tr>
+          <tr><td style="padding:8px 12px;border:1px solid rgba(230,237,246,0.12);color:rgba(230,237,246,0.55);font-size:12px;text-transform:uppercase;letter-spacing:0.1em;">Categories</td>
+              <td style="padding:8px 12px;border:1px solid rgba(230,237,246,0.12);color:#e6edf6;">${data.categories.join(', ')}</td></tr>
+          <tr><td style="padding:8px 12px;border:1px solid rgba(230,237,246,0.12);color:rgba(230,237,246,0.55);font-size:12px;text-transform:uppercase;letter-spacing:0.1em;">Service areas</td>
+              <td style="padding:8px 12px;border:1px solid rgba(230,237,246,0.12);color:#e6edf6;">${data.serviceAreas}</td></tr>
+        </table>
+        <p style="margin-top:18px;">
+          <a href="${reviewUrl}"
+             style="display:inline-block;padding:12px 22px;background:linear-gradient(120deg,#E8943A,#f5b668);color:#080E1C;border-radius:10px;font-weight:800;text-decoration:none;font-size:14px;">
+            Review application →
+          </a>
+        </p>
+        <p style="font-size:12px;color:rgba(230,237,246,0.45);margin-top:14px;">Application ID: ${data.applicationId}</p>
+      `,
+    );
+  }
+
   sendWorkspaceActivated(email: string, ownerName: string, workspaceName: string, workspaceId: string) {
     const appUrl = this.getAppUrl();
     const dashboardUrl = `${appUrl}/workspaces/${workspaceId}`;
