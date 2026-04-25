@@ -86,9 +86,12 @@ export class PasskeyService {
 
     const { credential, aaguid } = verification.registrationInfo;
 
+    // Normalise credential ID — strip any base64 padding for consistent storage
+    const credentialId = String(credential.id || '').replace(/=+$/, '');
+
     // Reject duplicate credentials
     const existing = await this.prisma.passkeyCredential.findUnique({
-      where: { credentialId: credential.id },
+      where: { credentialId },
     });
     if (existing) {
       throw new BadRequestException('This passkey is already registered to an account');
@@ -99,7 +102,7 @@ export class PasskeyService {
     await this.prisma.passkeyCredential.create({
       data: {
         userId,
-        credentialId: credential.id,
+        credentialId,
         publicKey: Buffer.from(credential.publicKey),
         counter: BigInt(credential.counter),
         deviceName: (deviceName || '').trim() || 'My device',
@@ -142,9 +145,12 @@ export class PasskeyService {
     }
     cacheBust(`passkey:auth:${challengeFromClient}`);
 
+    // Normalise the credential ID: strip any base64 padding so DB lookup is consistent
+    const credentialId = String(response.id || '').replace(/=+$/, '');
+
     // Look up which user owns this credential
     const passkeyRecord = await this.prisma.passkeyCredential.findUnique({
-      where: { credentialId: response.id },
+      where: { credentialId },
     });
     if (!passkeyRecord) {
       throw new UnauthorizedException('Passkey not recognized. Use email login instead.');
