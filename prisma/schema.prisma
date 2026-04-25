@@ -396,6 +396,7 @@ model User {
   otps                  OtpCode[]
   auditLogs             AuditLog[]
   staffBlockAssignments StaffBlockAssignment[]
+  passkeys              PasskeyCredential[]
 }
 
 model WorkspaceMember {
@@ -2183,4 +2184,22 @@ model EstateReminderLog {
   @@index([chargeId])
   @@index([leaseId])
   @@index([workspaceId, type, sentAt])
+}
+
+// ── Passkey (WebAuthn) Credentials ───────────────────────────────────────────
+model PasskeyCredential {
+  id           String    @id @default(cuid())
+  userId       String
+  credentialId String    @unique // base64url credential ID from authenticator
+  publicKey    Bytes              // COSE-encoded public key bytes
+  counter      BigInt    @default(0) // signature counter for replay-attack prevention
+  deviceName   String?            // e.g. "Joshua's iPhone"
+  aaguid       String?            // authenticator AAGUID
+  transports   String[]           // ["internal","usb","nfc","ble","hybrid"]
+  createdAt    DateTime  @default(now())
+  lastUsedAt   DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
