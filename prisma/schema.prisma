@@ -461,6 +461,7 @@ model OtpCode {
   codeHash  String
   expiresAt DateTime
 
+  attempts   Int       @default(0) // incremented on each wrong guess; burned after 5
   consumedAt DateTime?
   createdAt  DateTime  @default(now())
 

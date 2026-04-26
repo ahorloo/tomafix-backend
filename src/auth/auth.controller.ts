@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, Headers, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { PasskeyService } from './passkey.service';
 import { TrustedDeviceService } from './trusted-device.service';
@@ -16,11 +17,15 @@ export class AuthController {
 
   // ── Email OTP login ────────────────────────────────────────────────────
 
+  // 10 send attempts per IP per minute — stops OTP spam
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @Post('login/otp/send')
   sendLoginOtp(@Body() dto: SendLoginOtpDto) {
     return this.auth.sendLoginOtp(dto.email);
   }
 
+  // 15 verify attempts per IP per minute — stops brute-force guessing
+  @Throttle({ default: { ttl: 60_000, limit: 15 } })
   @Post('login/otp/verify')
   verifyLoginOtp(@Body() dto: VerifyLoginOtpDto) {
     return this.auth.verifyLoginOtp(dto.email, dto.code);
@@ -85,6 +90,9 @@ export class AuthController {
 
   // ── Trusted Device: Verify (no auth needed — IS the login method) ─────
 
+  // 20 attempts per IP per minute — token is 256-bit random so brute force is impossible,
+  // but still rate-limit to prevent credential stuffing / enumeration attempts
+  @Throttle({ default: { ttl: 60_000, limit: 20 } })
   @Post('trusted-device/verify')
   trustedDeviceVerify(@Body() body: { token: string }) {
     return this.trustedDevice.verifyDevice(body.token);

@@ -166,8 +166,21 @@ export class AuthService {
 
     if (!otp) throw new BadRequestException('Invalid or expired code');
 
+    // Burn the OTP after 5 wrong guesses — forces the user to request a new one
+    const MAX_ATTEMPTS = 5;
+    if (otp.attempts >= MAX_ATTEMPTS) {
+      await this.prisma.otpCode.update({ where: { id: otp.id }, data: { consumedAt: new Date() } });
+      throw new BadRequestException('Too many incorrect attempts. Please request a new code.');
+    }
+
     const ok = this.verifyOtpHash(code, otp.codeHash);
-    if (!ok) throw new BadRequestException('Invalid code');
+    if (!ok) {
+      await this.prisma.otpCode.update({ where: { id: otp.id }, data: { attempts: { increment: 1 } } });
+      const remaining = MAX_ATTEMPTS - (otp.attempts + 1);
+      throw new BadRequestException(
+        remaining > 0 ? `Invalid code. ${remaining} attempt${remaining === 1 ? '' : 's'} remaining.` : 'Too many incorrect attempts. Please request a new code.',
+      );
+    }
 
     await this.prisma.otpCode.update({ where: { id: otp.id }, data: { consumedAt: new Date() } });
 
