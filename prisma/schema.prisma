@@ -397,6 +397,7 @@ model User {
   auditLogs             AuditLog[]
   staffBlockAssignments StaffBlockAssignment[]
   passkeys              PasskeyCredential[]
+  trustedDevices        TrustedDevice[]
 }
 
 model WorkspaceMember {
@@ -2184,6 +2185,21 @@ model EstateReminderLog {
   @@index([chargeId])
   @@index([leaseId])
   @@index([workspaceId, type, sentAt])
+}
+
+// ── Trusted Device Tokens (Remember this device) ─────────────────────────────
+model TrustedDevice {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique // SHA-256 of the raw token stored on client
+  deviceName String?            // e.g. "Chrome on Android"
+  expiresAt  DateTime
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 // ── Passkey (WebAuthn) Credentials ───────────────────────────────────────────

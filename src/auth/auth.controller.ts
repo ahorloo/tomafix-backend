@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Headers, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { PasskeyService } from './passkey.service';
+import { TrustedDeviceService } from './trusted-device.service';
 import { SendLoginOtpDto } from './dto/send-login-otp.dto';
 import { VerifyLoginOtpDto } from './dto/verify-login-otp.dto';
 import { AuthGuard } from './auth.guard';
@@ -10,6 +11,7 @@ export class AuthController {
   constructor(
     private readonly auth: AuthService,
     private readonly passkey: PasskeyService,
+    private readonly trustedDevice: TrustedDeviceService,
   ) {}
 
   // ── Email OTP login ────────────────────────────────────────────────────
@@ -68,6 +70,41 @@ export class AuthController {
   ) {
     const payload = this.auth.verifyBearerToken(authorization);
     return this.passkey.removePasskey(payload.uid, id!);
+  }
+
+  // ── Trusted Device: Register (must be logged in) ─────────────────────
+
+  @Post('trusted-device/register')
+  trustedDeviceRegister(
+    @Headers('authorization') authorization?: string,
+    @Headers('user-agent') userAgent?: string,
+  ) {
+    const payload = this.auth.verifyBearerToken(authorization);
+    return this.trustedDevice.registerDevice(payload.uid, userAgent);
+  }
+
+  // ── Trusted Device: Verify (no auth needed — IS the login method) ─────
+
+  @Post('trusted-device/verify')
+  trustedDeviceVerify(@Body() body: { token: string }) {
+    return this.trustedDevice.verifyDevice(body.token);
+  }
+
+  // ── Trusted Device: Manage ────────────────────────────────────────────
+
+  @Get('trusted-devices')
+  listTrustedDevices(@Headers('authorization') authorization?: string) {
+    const payload = this.auth.verifyBearerToken(authorization);
+    return this.trustedDevice.listDevices(payload.uid);
+  }
+
+  @Delete('trusted-devices/:id')
+  removeTrustedDevice(
+    @Headers('authorization') authorization?: string,
+    @Param('id') id?: string,
+  ) {
+    const payload = this.auth.verifyBearerToken(authorization);
+    return this.trustedDevice.removeDevice(payload.uid, id!);
   }
 
   // ── Profile ────────────────────────────────────────────────────────────
