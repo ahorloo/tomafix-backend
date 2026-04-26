@@ -669,10 +669,14 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('User not found');
 
+    // Bump updatedAt — this invalidates all existing bearer tokens (assertTokenNotRevoked check)
     await this.prisma.user.update({
       where: { id: userId },
       data: { fullName: user.fullName ?? null },
     });
+
+    // Delete ALL trusted device tokens so no remembered device can bypass the revoke
+    await this.prisma.trustedDevice.deleteMany({ where: { userId } });
 
     const memberships = await this.prisma.workspaceMember.findMany({
       where: { userId, isActive: true },
