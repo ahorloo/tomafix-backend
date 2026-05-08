@@ -12,6 +12,7 @@ import { createHmac, randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaystackService } from './paystack.service';
 import { getPaystackConfig } from './paystack.config';
+import { cacheBust } from './cache';
 
 @Injectable()
 export class BillingService implements OnModuleInit, OnModuleDestroy {
@@ -37,7 +38,50 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
     private readonly paystack: PaystackService,
   ) {}
 
+  // Single source of truth for the workspace.status ↔ billingStatus mapping.
+  // Use this anywhere we set billingStatus so the two enums never drift.
+  private workspaceStatusFor(billingStatus: BillingStatus): WorkspaceStatus {
+    switch (billingStatus) {
+      case BillingStatus.SUSPENDED:
+      case BillingStatus.CANCELLED:
+        return WorkspaceStatus.SUSPENDED;
+      case BillingStatus.PAST_DUE:
+      case BillingStatus.PENDING_PAYMENT:
+        return WorkspaceStatus.PENDING_PAYMENT;
+      case BillingStatus.ACTIVE:
+      default:
+        return WorkspaceStatus.ACTIVE;
+    }
+  }
+
+  // Boot-time hygiene: warn loudly about any workspace whose stored planName
+  // doesn't resolve to a known plan. Helps catch drift before it bites at
+  // request-time entitlements.
+  private async auditPlanNames() {
+    try {
+      const { PLAN_MAP } = require('./planConfig') as typeof import('./planConfig');
+      const known = new Set(Object.keys(PLAN_MAP));
+      const rows = await this.prisma.workspace.findMany({
+        select: { id: true, name: true, planName: true },
+      });
+      const drift = rows.filter((r) => !known.has(String(r.planName || 'Starter')));
+      if (drift.length) {
+        this.logger.warn(
+          `[Plan audit] ${drift.length} workspace(s) have unknown plan names: ${drift
+            .slice(0, 5)
+            .map((r) => `${r.id}=${r.planName}`)
+            .join(', ')}${drift.length > 5 ? '…' : ''}`,
+        );
+      }
+    } catch (e: any) {
+      this.logger.warn(`[Plan audit] failed: ${e?.message || e}`);
+    }
+  }
+
   onModuleInit() {
+    // Fire-and-forget audit so startup isn't gated on it.
+    void this.auditPlanNames();
+
     const mins = Number(process.env.BILLING_DUNNING_INTERVAL_MIN || 0);
     if (!mins || mins < 1) return;
 
@@ -504,6 +548,7 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
           nextRenewal: end,
         },
       });
+      cacheBust(`billing:entitlements:${payment.workspaceId}`);
 
       const existingSub = await tx.subscription.findFirst({
         where: { workspaceId: payment.workspaceId },
@@ -837,7 +882,14 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
 
     await this.prisma.payment.update({ where: { id: latest.id }, data: { status: PaymentStatus.PENDING } });
     this.assertBillingTransition(ws.billingStatus as BillingStatus, BillingStatus.PAST_DUE);
-    await this.prisma.workspace.update({ where: { id: workspaceId }, data: { billingStatus: BillingStatus.PAST_DUE } });
+    await this.prisma.workspace.update({
+      where: { id: workspaceId },
+      data: {
+        billingStatus: BillingStatus.PAST_DUE,
+        status: this.workspaceStatusFor(BillingStatus.PAST_DUE),
+      },
+    });
+    cacheBust(`billing:entitlements:${workspaceId}`);
 
     await this.prisma.auditLog.create({
       data: {
@@ -856,10 +908,7 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
 
     this.assertBillingTransition(ws.billingStatus as BillingStatus, to);
 
-    const workspaceStatus =
-      to === BillingStatus.SUSPENDED || to === BillingStatus.CANCELLED
-        ? WorkspaceStatus.SUSPENDED
-        : WorkspaceStatus.ACTIVE;
+    const workspaceStatus = this.workspaceStatusFor(to);
 
     await this.prisma.workspace.update({
       where: { id: workspaceId },
@@ -868,6 +917,7 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
         status: workspaceStatus,
       },
     });
+    cacheBust(`billing:entitlements:${workspaceId}`);
 
     await this.prisma.auditLog.create({
       data: {
@@ -1036,6 +1086,7 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       },
       select: { id: true, status: true, billingStatus: true, nextRenewal: true, planName: true },
     });
+    cacheBust(`billing:entitlements:${workspaceId}`);
 
     return {
       ok: true,

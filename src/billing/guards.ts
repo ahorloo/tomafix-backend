@@ -9,7 +9,7 @@ import { Request, Response, NextFunction } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { cacheGet, cacheSet } from './cache';
 import { FeatureKey, GatedErrorPayload, LimitKey, PlanName } from '../types/billing';
-import { getEntitlements, assertPlanExists } from './planConfig';
+import { getEntitlements, assertPlanExists, applyWorkspaceOverrides } from './planConfig';
 import { TemplateType } from '@prisma/client';
 
 type GuardedMutation = {
@@ -21,10 +21,15 @@ type GuardRule = GuardedMutation & { method: string; pattern: RegExp };
 
 // Map mutate endpoints (regex on full path)
 const GUARDED: GuardRule[] = [
-  // ── APARTMENT limits ─────────────────────────────────────────────────────
+  // ── APARTMENT / ESTATE limits ────────────────────────────────────────────
   { method: 'POST', pattern: /^\/workspaces\/[^/]+\/apartment\/estates$/, limit: 'properties' },
   { method: 'POST', pattern: /^\/workspaces\/[^/]+\/apartment\/units$/, limit: 'units' },
-  { method: 'POST', pattern: /^\/workspaces\/[^/]+\/apartment\/residents$/, feature: 'staff' },
+  // Resident count is plan-limited (numeric), not feature-gated.
+  { method: 'POST', pattern: /^\/workspaces\/[^/]+\/apartment\/residents$/, limit: 'residents' },
+  // Monthly request volume cap (admin/staff-created requests).
+  { method: 'POST', pattern: /^\/workspaces\/[^/]+\/apartment\/requests$/, limit: 'requestsPerMonth' },
+  // Tenant-submitted requests count toward the same monthly cap.
+  { method: 'POST', pattern: /^\/workspaces\/[^/]+\/tenant\/requests$/, limit: 'requestsPerMonth' },
   // ── APARTMENT feature gates ───────────────────────────────────────────────
   // Visitors (QR check-in/out) — Growth+ only
   { method: 'POST', pattern: /^\/workspaces\/[^/]+\/visitors(?:$|\/)/, feature: 'visitors' },
@@ -53,13 +58,29 @@ export class EntitlementsGuard implements NestMiddleware {
     if (!workspaceId) throw new BadRequestException('workspaceId is required');
 
     const cacheKey = `billing:entitlements:${workspaceId}`;
-    const cached = cacheGet<{ planName: PlanName; templateType: TemplateType; usage: { propertiesUsed: number; unitsUsed: number; managersUsed: number } }>(cacheKey);
+    type CachedUsage = {
+      propertiesUsed: number;
+      unitsUsed: number;
+      managersUsed: number;
+      residentsUsed: number;
+      requestsThisMonthUsed: number;
+    };
+    type CachedShape = {
+      planName: PlanName;
+      templateType: TemplateType;
+      usage: CachedUsage;
+      overrides?: { features?: Record<string, boolean>; limits?: Record<string, number> } | null;
+    };
+    const cached = cacheGet<CachedShape>(cacheKey);
     const entitlements = cached || (await this.computeAndCache(workspaceId, cacheKey));
 
-    const { limits, features } = getEntitlements(entitlements.planName, entitlements.templateType as TemplateType);
+    const baseEnt = getEntitlements(entitlements.planName, entitlements.templateType as TemplateType);
+    const { limits, features } = applyWorkspaceOverrides(baseEnt, entitlements.overrides ?? null);
 
     if (rule.limit) {
-      const used = entitlements.usage[`${rule.limit}Used` as const];
+      const usageKey =
+        rule.limit === 'requestsPerMonth' ? 'requestsThisMonthUsed' : (`${rule.limit}Used` as keyof CachedUsage);
+      const used = entitlements.usage[usageKey] ?? 0;
       const limit = limits[rule.limit];
       if (used >= limit) {
         return this.denyLimit(workspaceId, entitlements.planName, rule.limit, limit, used);
@@ -80,7 +101,11 @@ export class EntitlementsGuard implements NestMiddleware {
     const planName = (ws as any).planName || 'Starter';
     assertPlanExists(planName);
 
-    const [propertiesUsed, unitsUsed, managersUsed] = await Promise.all([
+    const monthStart = new Date();
+    monthStart.setUTCDate(1);
+    monthStart.setUTCHours(0, 0, 0, 0);
+
+    const [propertiesUsed, unitsUsed, managersUsed, residentsUsed, requestsThisMonthUsed] = await Promise.all([
       ws.templateType === TemplateType.ESTATE
         ? this.prisma.estate.count({ where: { workspaceId } })
         : ws.templateType === TemplateType.OFFICE
@@ -94,9 +119,28 @@ export class EntitlementsGuard implements NestMiddleware {
       this.prisma.workspaceMember.count({
         where: { workspaceId, isActive: true, role: 'MANAGER' as any },
       }),
+      ws.templateType === TemplateType.ESTATE
+        ? this.prisma.estateResident.count({ where: { workspaceId } })
+        : ws.templateType === TemplateType.APARTMENT
+          ? this.prisma.apartmentResident.count({ where: { workspaceId } })
+          : Promise.resolve(0),
+      ws.templateType === TemplateType.ESTATE
+        ? this.prisma.estateRequest.count({ where: { workspaceId, createdAt: { gte: monthStart } } })
+        : ws.templateType === TemplateType.APARTMENT
+          ? this.prisma.apartmentRequest.count({ where: { workspaceId, createdAt: { gte: monthStart } } })
+          : ws.templateType === TemplateType.OFFICE
+            ? this.prisma.officeRequest.count({ where: { workspaceId, createdAt: { gte: monthStart } } })
+            : Promise.resolve(0),
     ]);
 
-    const value = { planName, templateType: ws.templateType, usage: { propertiesUsed, unitsUsed, managersUsed } };
+    const overrides = ((ws as any).permissionPolicy as any)?.entitlementOverrides ?? null;
+
+    const value = {
+      planName,
+      templateType: ws.templateType,
+      usage: { propertiesUsed, unitsUsed, managersUsed, residentsUsed, requestsThisMonthUsed },
+      overrides,
+    };
     cacheSet(cacheKey, value, 3 * 60 * 1000);
     return value;
   }

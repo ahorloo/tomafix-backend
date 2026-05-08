@@ -511,6 +511,20 @@ export class ApartmentService {
     const label = dto.label.trim();
     const block = dto.block?.trim() || null;
     const floor = dto.floor?.trim() || null;
+
+    // Plan-tier gate: block/floor grouping is a Growth+ feature.
+    if (block || floor) {
+      const planName = resolvePlanName((ws as any).planName || 'Starter');
+      const features = getEntitlements(planName, ws.templateType).features;
+      if (!features.blocks) {
+        throw new ForbiddenException({
+          code: 'FEATURE_LOCKED',
+          message: `Block/floor grouping is not available on ${planName}. Upgrade to use blocks.`,
+          requiredPlan: this.nextPlan(planName),
+          context: { feature: 'blocks' },
+        } as any);
+      }
+    }
     const estateId = await this.resolveEstateIdForWorkspace(workspaceId, dto.estateId);
     if (ws.templateType === TemplateType.ESTATE && !estateId) {
       throw new BadRequestException('Create/select a property (estate) before adding units');
@@ -570,6 +584,23 @@ export class ApartmentService {
 
     if (dto.label !== undefined && !dto.label.trim()) {
       throw new BadRequestException('label cannot be empty');
+    }
+
+    // Plan-tier gate: setting a non-empty block/floor on an existing unit
+    // requires the `blocks` feature.
+    const settingBlock = dto.block !== undefined && !!dto.block?.trim();
+    const settingFloor = dto.floor !== undefined && !!dto.floor?.trim();
+    if (settingBlock || settingFloor) {
+      const planName = resolvePlanName((ws as any).planName || 'Starter');
+      const features = getEntitlements(planName, ws.templateType).features;
+      if (!features.blocks) {
+        throw new ForbiddenException({
+          code: 'FEATURE_LOCKED',
+          message: `Block/floor grouping is not available on ${planName}. Upgrade to use blocks.`,
+          requiredPlan: this.nextPlan(planName),
+          context: { feature: 'blocks' },
+        } as any);
+      }
     }
 
     const estateId = dto.estateId !== undefined
@@ -964,6 +995,10 @@ export class ApartmentService {
       return hydrated;
     }
 
+    if (opts.category?.trim()) {
+      where.category = { equals: opts.category.trim(), mode: 'insensitive' };
+    }
+
     return this.prisma.apartmentRequest.findMany({
       where,
       orderBy: { createdAt: 'desc' },
@@ -1206,6 +1241,7 @@ export class ApartmentService {
             residentId: dto.residentId ?? null,
             title: dto.title.trim(),
             description: dto.description?.trim() || null,
+            category: this.normalizeOptionalText(dto.category),
             photoUrl: dto.photoUrl?.trim() || null,
             priority: dto.priority ?? RequestPriority.NORMAL,
             status: dto.status ?? RequestStatus.PENDING,
@@ -1299,7 +1335,12 @@ export class ApartmentService {
 
     return this.prisma.apartmentRequest.update({
       where: { id: requestId },
-      data: { status: dto.status ?? undefined, priority: dto.priority ?? undefined },
+      data: {
+        status: dto.status ?? undefined,
+        priority: dto.priority ?? undefined,
+        category:
+          dto.category !== undefined ? this.normalizeOptionalText(dto.category) : undefined,
+      },
       include: {
         unit: { select: { id: true, label: true, block: true, floor: true } },
         resident: { select: { id: true, fullName: true } },

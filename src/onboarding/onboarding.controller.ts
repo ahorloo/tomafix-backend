@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { MemberRole } from '@prisma/client';
 import { OnboardingService } from './onboarding.service';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { AuthGuard } from '../auth/auth.guard';
@@ -18,12 +19,20 @@ type CreateInviteDto = {
   workspaceId: string;
   email: string;
   residentName?: string;
+  role?: MemberRole;
+  unitId?: string | null;
 };
 
 type AcceptInviteDto = {
   token: string;
   email: string;
+  code: string;
   fullName?: string;
+};
+
+type BeginAcceptInviteDto = {
+  token: string;
+  email: string;
 };
 
 type BulkInviteRowDto = {
@@ -94,6 +103,11 @@ export class OnboardingController {
   @Post('invites/revoke')
   revokeInvite(@Body() dto: RevokeInviteDto, @Req() req: any) {
     return this.onboarding.revokeTenantInvite(dto, req?.authUserId);
+  }
+
+  @Post('invites/begin-accept')
+  beginAcceptInvite(@Body() dto: BeginAcceptInviteDto) {
+    return this.onboarding.beginAcceptTenantInvite(dto);
   }
 
   @Post('invites/accept')

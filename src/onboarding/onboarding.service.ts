@@ -12,6 +12,7 @@ import { BillingStatus, MemberRole, OtpChannel, OtpPurpose, ResidentRole, Reside
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
+import { getEntitlements, resolvePlanName } from '../billing/planConfig';
 
 @Injectable()
 export class OnboardingService {
@@ -126,19 +127,41 @@ export class OnboardingService {
     if (!m) throw new ForbiddenException('Forbidden resource');
   }
 
-  async createTenantInvite(input: { workspaceId: string; email: string; residentName?: string }, actorUserId?: string) {
+  async createTenantInvite(
+    input: { workspaceId: string; email: string; residentName?: string; role?: MemberRole; unitId?: string | null },
+    actorUserId?: string,
+  ) {
     const workspaceId = String(input.workspaceId || '').trim();
     const email = String(input.email || '').trim().toLowerCase();
     if (!workspaceId || !email) throw new BadRequestException('workspaceId and email are required');
+
+    const role = input.role ?? MemberRole.RESIDENT;
+    if (role === MemberRole.OWNER_ADMIN) {
+      throw new ForbiddenException('Invites cannot grant OWNER_ADMIN role');
+    }
 
     const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
     if (!ws) throw new BadRequestException('Workspace not found');
     await this.assertInviteManager(workspaceId, actorUserId);
 
+    // Resolve and validate unitId (resident invites are unit-scoped per blueprint).
+    let unitId: string | null = null;
+    if (input.unitId) {
+      const trimmed = String(input.unitId).trim();
+      if (trimmed) {
+        const exists =
+          ws.templateType === TemplateType.ESTATE
+            ? await this.prisma.estateUnit.findFirst({ where: { id: trimmed, workspaceId } })
+            : await this.prisma.apartmentUnit.findFirst({ where: { id: trimmed, workspaceId } });
+        if (!exists) throw new BadRequestException('Unit not found in this workspace');
+        unitId = trimmed;
+      }
+    }
+
     const sentLastHour = await this.prisma.invite.count({
       where: {
         workspaceId,
-        role: MemberRole.RESIDENT,
+        role,
         createdAt: { gt: new Date(Date.now() - 60 * 60 * 1000) },
       },
     });
@@ -146,12 +169,12 @@ export class OnboardingService {
       throw new HttpException('Invite rate limit reached for this workspace. Try again shortly.', HttpStatus.TOO_MANY_REQUESTS);
     }
 
-    // Invalidate older open invites for same workspace/email to avoid confusion at scale.
+    // Invalidate older open invites for same workspace/email/role to avoid confusion at scale.
     await this.prisma.invite.updateMany({
       where: {
         workspaceId,
         email,
-        role: MemberRole.RESIDENT,
+        role,
         acceptedAt: null,
         expiresAt: { gt: new Date() },
       },
@@ -160,20 +183,22 @@ export class OnboardingService {
 
     const rawToken = randomBytes(24).toString('base64url');
     const tokenHash = createHash('sha256').update(rawToken).digest('hex');
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
 
     await this.prisma.invite.create({
       data: {
         workspaceId,
         email,
-        role: MemberRole.RESIDENT,
+        role,
+        unitId,
         tokenHash,
         expiresAt,
       },
     });
 
     const appUrl = (process.env.APP_BASE_URL || process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/+$/, '');
-    const inviteUrl = `${appUrl}/join?token=${encodeURIComponent(rawToken)}`;
+    // Use URL fragment so the token is never sent to the server in referrer / access logs.
+    const inviteUrl = `${appUrl}/join#token=${encodeURIComponent(rawToken)}`;
 
     await this.sendEmailWithResend({
       to: email,
@@ -230,6 +255,8 @@ export class OnboardingService {
         workspaceId,
         email: invite.email,
         residentName: input.residentName,
+        role: invite.role,
+        unitId: invite.unitId ?? null,
       },
       actorUserId,
     );
@@ -257,10 +284,100 @@ export class OnboardingService {
     return { ok: true, inviteId, status: 'REVOKED' };
   }
 
-  async acceptTenantInvite(input: { token: string; email: string; fullName?: string }) {
+  /**
+   * Step 1 of two-step invite acceptance: validate invite + email, send an OTP
+   * to the invite email. The user proves possession of the email before any
+   * membership is granted (per blueprint §3 "Invite + OTP verify").
+   */
+  async beginAcceptTenantInvite(input: { token: string; email: string }) {
     const token = String(input.token || '').trim();
     const providedEmail = String(input.email || '').trim().toLowerCase();
     if (!token || !providedEmail) throw new BadRequestException('token and email are required');
+
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const invite = await this.prisma.invite.findUnique({ where: { tokenHash } });
+    if (!invite || invite.acceptedAt || invite.expiresAt <= new Date()) {
+      throw new BadRequestException('Invite is invalid, expired, or already used');
+    }
+    const email = String(invite.email || '').trim().toLowerCase();
+    if (!email) throw new BadRequestException('Invite email is missing');
+    if (email !== providedEmail) throw new UnauthorizedException('Invite email mismatch');
+
+    // Upsert a user shell so the OTP has a userId to reference.
+    const user = await this.prisma.user.upsert({
+      where: { email },
+      update: {},
+      create: { email },
+    });
+
+    // Throttle re-sends to once per 30s, mirroring sendLoginOtp.
+    const latest = await this.prisma.otpCode.findFirst({
+      where: {
+        userId: user.id,
+        purpose: OtpPurpose.INVITE_ACCEPT,
+        channel: OtpChannel.EMAIL,
+        target: email,
+        consumedAt: null,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (latest) {
+      const secondsSince = (Date.now() - latest.createdAt.getTime()) / 1000;
+      if (secondsSince < 30) {
+        return {
+          ok: false,
+          message: `Please wait ${Math.max(1, Math.ceil(30 - secondsSince))}s before requesting another code`,
+          retryAfterSeconds: Math.max(1, Math.ceil(30 - secondsSince)),
+        };
+      }
+    }
+
+    const code = this.makeOtp();
+    const codeHash = this.hashOtp(code);
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    await this.prisma.otpCode.create({
+      data: {
+        workspaceId: invite.workspaceId,
+        userId: user.id,
+        purpose: OtpPurpose.INVITE_ACCEPT,
+        channel: OtpChannel.EMAIL,
+        target: email,
+        codeHash,
+        expiresAt,
+      },
+    });
+
+    const hasResend = !!process.env.RESEND_API_KEY;
+    const isProd = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+    if (!hasResend) this.logger.warn(`[DEV INVITE OTP] ${email} -> ${code}`);
+
+    try {
+      await this.sendEmailWithResend({
+        to: email,
+        subject: `Your TomaFix invite code: ${code}`,
+        html: this.otpEmailHtml(code),
+      });
+    } catch (err) {
+      if (isProd) throw err;
+      this.logger.warn(
+        `Invite OTP email failed in dev; returning code so accept flow stays usable. To: ${email}. Reason: ${(err as Error).message}`,
+      );
+    }
+
+    return {
+      ok: true,
+      message: 'OTP sent',
+      ...(!isProd ? { devOtp: code } : {}),
+    };
+  }
+
+  async acceptTenantInvite(input: { token: string; email: string; code: string; fullName?: string }) {
+    const token = String(input.token || '').trim();
+    const providedEmail = String(input.email || '').trim().toLowerCase();
+    const code = String(input.code || '').trim();
+    if (!token || !providedEmail) throw new BadRequestException('token and email are required');
+    if (!code) throw new BadRequestException('OTP code is required');
 
     const tokenHash = createHash('sha256').update(token).digest('hex');
     const invite = await this.prisma.invite.findUnique({ where: { tokenHash } });
@@ -273,6 +390,55 @@ export class OnboardingService {
     if (!email) throw new BadRequestException('Invite email is missing');
     if (email !== providedEmail) {
       throw new UnauthorizedException('Invite email mismatch');
+    }
+
+    // Verify OTP issued by beginAcceptTenantInvite.
+    const otpUser = await this.prisma.user.findUnique({ where: { email } });
+    if (!otpUser) throw new BadRequestException('Request a code first');
+    const otp = await this.prisma.otpCode.findFirst({
+      where: {
+        userId: otpUser.id,
+        purpose: OtpPurpose.INVITE_ACCEPT,
+        channel: OtpChannel.EMAIL,
+        target: email,
+        consumedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!otp) throw new BadRequestException('Invalid or expired code');
+    const MAX_ATTEMPTS = 5;
+    if (otp.attempts >= MAX_ATTEMPTS) {
+      await this.prisma.otpCode.update({ where: { id: otp.id }, data: { consumedAt: new Date() } });
+      throw new BadRequestException('Too many incorrect attempts. Please request a new code.');
+    }
+    if (!this.verifyOtpHash(code, otp.codeHash)) {
+      await this.prisma.otpCode.update({ where: { id: otp.id }, data: { attempts: { increment: 1 } } });
+      const remaining = MAX_ATTEMPTS - (otp.attempts + 1);
+      throw new BadRequestException(
+        remaining > 0 ? `Invalid code. ${remaining} attempt${remaining === 1 ? '' : 's'} remaining.` : 'Too many incorrect attempts. Please request a new code.',
+      );
+    }
+    await this.prisma.otpCode.update({ where: { id: otp.id }, data: { consumedAt: new Date() } });
+
+    // If the invite was scoped to a specific unit, ensure the resident profile
+    // for this workspace+email is bound to that exact unit. Prevents accepting
+    // a unit-A invite onto a unit-B resident.
+    if (invite.unitId) {
+      const ws = await this.prisma.workspace.findUnique({ where: { id: invite.workspaceId } });
+      const residentForEmail =
+        ws?.templateType === TemplateType.ESTATE
+          ? await this.prisma.estateResident.findFirst({
+              where: { workspaceId: invite.workspaceId, email: { equals: email, mode: 'insensitive' } },
+              select: { unitId: true },
+            })
+          : await this.prisma.apartmentResident.findFirst({
+              where: { workspaceId: invite.workspaceId, email: { equals: email, mode: 'insensitive' } },
+              select: { unitId: true },
+            });
+      if (residentForEmail && residentForEmail.unitId && residentForEmail.unitId !== invite.unitId) {
+        throw new UnauthorizedException('Invite unit mismatch');
+      }
     }
 
     const residentPhone = await this.syncUserPhoneFromResidentRecord(invite.workspaceId, email);
@@ -290,31 +456,35 @@ export class OnboardingService {
       }
     }
 
-    const user = await this.prisma.user.upsert({
-      where: { email },
-      update: {
-        fullName: input.fullName?.trim() || undefined,
-        ...(phone ? { phone } : {}),
-      },
-      create: {
-        email,
-        fullName: input.fullName?.trim() || null,
-        ...(phone ? { phone } : {}),
-      },
-    });
+    const user = await this.prisma.$transaction(async (tx) => {
+      const upserted = await tx.user.upsert({
+        where: { email },
+        update: {
+          fullName: input.fullName?.trim() || undefined,
+          ...(phone ? { phone } : {}),
+        },
+        create: {
+          email,
+          fullName: input.fullName?.trim() || null,
+          ...(phone ? { phone } : {}),
+        },
+      });
 
-    await this.prisma.workspaceMember.upsert({
-      where: { workspaceId_userId: { workspaceId: invite.workspaceId, userId: user.id } },
-      update: { role: invite.role, isActive: true },
-      create: {
-        workspaceId: invite.workspaceId,
-        userId: user.id,
-        role: invite.role,
-        isActive: true,
-      },
-    });
+      await tx.workspaceMember.upsert({
+        where: { workspaceId_userId: { workspaceId: invite.workspaceId, userId: upserted.id } },
+        update: { role: invite.role, isActive: true },
+        create: {
+          workspaceId: invite.workspaceId,
+          userId: upserted.id,
+          role: invite.role,
+          isActive: true,
+        },
+      });
 
-    await this.prisma.invite.update({ where: { id: invite.id }, data: { acceptedAt: new Date() } });
+      await tx.invite.update({ where: { id: invite.id }, data: { acceptedAt: new Date() } });
+
+      return upserted;
+    });
 
     return this.auth.createSessionForUser(user.id, invite.workspaceId);
   }
@@ -428,6 +598,26 @@ export class OnboardingService {
     const ws = await this.prisma.workspace.findUnique({ where: { id: preview.workspaceId } });
     if (!ws) throw new BadRequestException('Workspace not found');
 
+    // Plan-tier residents cap: ensure the bulk batch won't push us over the limit.
+    const planName = resolvePlanName((ws as any).planName || 'Starter');
+    const residentsLimit = getEntitlements(planName, ws.templateType).limits.residents;
+    const currentResidents =
+      ws.templateType === TemplateType.ESTATE
+        ? await this.prisma.estateResident.count({ where: { workspaceId: preview.workspaceId } })
+        : await this.prisma.apartmentResident.count({ where: { workspaceId: preview.workspaceId } });
+    const wouldBe = currentResidents + (preview.validRows?.length ?? 0);
+    if (wouldBe > residentsLimit) {
+      throw new HttpException(
+        {
+          code: 'LIMIT_EXCEEDED',
+          message: `Bulk invite would exceed the ${planName} residents cap (${currentResidents}+${preview.validRows.length}/${residentsLimit}). Reduce the batch or upgrade.`,
+          requiredPlan: planName === 'Starter' ? 'Growth' : 'TomaPrime',
+          context: { limit: 'residents' },
+        },
+        HttpStatus.FORBIDDEN,
+      );
+    }
+
     const sent: any[] = [];
     for (const row of preview.validRows as any[]) {
       const resident = ws.templateType === TemplateType.ESTATE
@@ -486,6 +676,7 @@ export class OnboardingService {
         workspaceId: preview.workspaceId,
         email: row.email,
         residentName: row.fullName,
+        unitId: row.unitId ?? null,
       });
 
       sent.push({ rowNo: row.rowNo, residentId: resident.id, email: row.email, inviteUrl: invite.inviteUrl });

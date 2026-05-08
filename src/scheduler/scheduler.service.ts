@@ -4,6 +4,7 @@ import { ReminderType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { SmsService } from '../sms/sms.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class SchedulerService {
@@ -13,6 +14,7 @@ export class SchedulerService {
     private readonly prisma: PrismaService,
     private readonly mail: MailService,
     private readonly sms: SmsService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   private smsEnabled() {
@@ -573,5 +575,216 @@ export class SchedulerService {
     }
 
     this.logger.log('[Subscription Cron] Done.');
+  }
+
+  // Every 15 minutes: alert owners/managers about work orders that have breached
+  // their SLA deadline and have not yet been alerted on. Skips terminal states.
+  @Cron(CronExpression.EVERY_30_MINUTES)
+  async runSlaBreachAlerts() {
+    const now = new Date();
+    const terminal = ['COMPLETED', 'CANCELLED'] as const;
+
+    const [apt, est] = await Promise.all([
+      this.prisma.apartmentWorkOrder.findMany({
+        where: {
+          slaDeadline: { not: null, lte: now },
+          slaBreachAlertedAt: null,
+          status: { notIn: terminal as any },
+        },
+        select: {
+          id: true,
+          workspaceId: true,
+          title: true,
+          unitLabel: true,
+          slaDeadline: true,
+          assignedToUserId: true,
+        },
+        take: 200,
+      }),
+      this.prisma.estateWorkOrder.findMany({
+        where: {
+          slaDeadline: { not: null, lte: now },
+          slaBreachAlertedAt: null,
+          status: { notIn: terminal as any },
+        },
+        select: {
+          id: true,
+          workspaceId: true,
+          title: true,
+          unitLabel: true,
+          slaDeadline: true,
+          assignedToUserId: true,
+        },
+        take: 200,
+      }),
+    ]);
+
+    if (!apt.length && !est.length) return;
+    this.logger.log(`[SLA Cron] Apartment breaches=${apt.length} Estate breaches=${est.length}`);
+
+    const flagAndNotify = async (
+      kind: 'apartment' | 'estate',
+      rows: Array<{
+        id: string;
+        workspaceId: string;
+        title: string;
+        unitLabel: string | null;
+        slaDeadline: Date | null;
+        assignedToUserId: string | null;
+      }>,
+    ) => {
+      for (const wo of rows) {
+        try {
+          // Resolve recipients: owner + active managers, plus the assignee if any.
+          const ws = await this.prisma.workspace.findUnique({
+            where: { id: wo.workspaceId },
+            select: {
+              id: true,
+              name: true,
+              owner: { select: { email: true } },
+              members: {
+                where: { isActive: true, role: { in: ['OWNER_ADMIN', 'MANAGER'] } },
+                include: { user: { select: { email: true } } },
+              },
+            },
+          });
+          const recipients = new Set<string>();
+          if (ws?.owner?.email) recipients.add(ws.owner.email.toLowerCase());
+          for (const m of ws?.members || []) {
+            const e = m.user?.email?.toLowerCase();
+            if (e) recipients.add(e);
+          }
+          if (wo.assignedToUserId) {
+            const u = await this.prisma.user.findUnique({
+              where: { id: wo.assignedToUserId },
+              select: { email: true },
+            });
+            if (u?.email) recipients.add(u.email.toLowerCase());
+          }
+
+          const subject = `SLA breach • ${wo.title}`;
+          const html = `
+            <p>A work order has breached its SLA deadline and is still open.</p>
+            <p><b>Title:</b> ${wo.title}</p>
+            <p><b>Unit:</b> ${wo.unitLabel || '-'}</p>
+            <p><b>SLA deadline:</b> ${wo.slaDeadline?.toISOString()}</p>
+          `;
+          await Promise.all(
+            Array.from(recipients).map((to) => this.mail.send(to, subject, html).catch((e) => {
+              this.logger.warn(`[SLA Cron] mail send failed to ${to}: ${e?.message || e}`);
+            })),
+          );
+
+          // Also push an in-app notification to the same audience.
+          const userIds: string[] = [];
+          if (ws?.owner) {
+            const ownerUser = await this.prisma.user.findFirst({
+              where: { email: ws.owner.email || '' },
+              select: { id: true },
+            });
+            if (ownerUser?.id) userIds.push(ownerUser.id);
+          }
+          for (const m of ws?.members || []) {
+            if (m.userId) userIds.push(m.userId);
+          }
+          if (wo.assignedToUserId) userIds.push(wo.assignedToUserId);
+          await this.notifications.pushMany(wo.workspaceId, userIds, {
+            topic: 'SLA',
+            title: `SLA breach: ${wo.title}`,
+            body: `Work order on unit ${wo.unitLabel || '-'} is past its SLA deadline.`,
+            link: `/app/${wo.workspaceId}/work-orders/${wo.id}`,
+            data: { workOrderId: wo.id, slaDeadline: wo.slaDeadline },
+          });
+
+          if (kind === 'apartment') {
+            await this.prisma.apartmentWorkOrder.update({
+              where: { id: wo.id },
+              data: { slaBreachAlertedAt: new Date() },
+            });
+          } else {
+            await this.prisma.estateWorkOrder.update({
+              where: { id: wo.id },
+              data: { slaBreachAlertedAt: new Date() },
+            });
+          }
+
+          await this.prisma.auditLog.create({
+            data: {
+              workspaceId: wo.workspaceId,
+              action: 'work_order.sla_breached',
+              meta: { workOrderId: wo.id, slaDeadline: wo.slaDeadline },
+            },
+          });
+        } catch (e: any) {
+          this.logger.warn(`[SLA Cron] failed to alert on work order ${wo.id}: ${e?.message || e}`);
+        }
+      }
+    };
+
+    await flagAndNotify('apartment', apt);
+    await flagAndNotify('estate', est);
+  }
+
+  // Every 5 minutes: retry failed notifications from the dead-letter queue
+  // with exponential backoff. Marks rows SENT or FAILED after 6 attempts.
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async runNotificationDlq() {
+    const MAX_ATTEMPTS = 6;
+    const now = new Date();
+    const due = await this.prisma.notificationDeadLetter.findMany({
+      where: {
+        status: { in: ['PENDING', 'RETRYING'] },
+        nextAttemptAt: { lte: now },
+      },
+      orderBy: { nextAttemptAt: 'asc' },
+      take: 50,
+    });
+    if (!due.length) return;
+    this.logger.log(`[DLQ Cron] Retrying ${due.length} notification(s)`);
+
+    for (const row of due) {
+      try {
+        if (row.channel !== 'EMAIL') {
+          // Other channels not yet wired; skip but mark FAILED to stop polling.
+          await this.prisma.notificationDeadLetter.update({
+            where: { id: row.id },
+            data: { status: 'FAILED', lastError: `Unsupported channel ${row.channel}` },
+          });
+          continue;
+        }
+
+        const payload = (row.payload as any) || {};
+        const result = await this.mail.retryEmail(row.recipient, row.subject || '', String(payload.html || ''));
+        if (result.ok) {
+          await this.prisma.notificationDeadLetter.update({
+            where: { id: row.id },
+            data: { status: 'SENT', sentAt: new Date(), attempts: row.attempts + 1, lastError: null },
+          });
+          continue;
+        }
+
+        const nextAttempts = row.attempts + 1;
+        if (nextAttempts >= MAX_ATTEMPTS) {
+          await this.prisma.notificationDeadLetter.update({
+            where: { id: row.id },
+            data: { status: 'FAILED', attempts: nextAttempts, lastError: result.error },
+          });
+        } else {
+          // Exponential backoff: 1m, 5m, 15m, 1h, 6h, 24h
+          const backoffMins = [1, 5, 15, 60, 360, 1440][Math.min(nextAttempts, 5)];
+          await this.prisma.notificationDeadLetter.update({
+            where: { id: row.id },
+            data: {
+              status: 'RETRYING',
+              attempts: nextAttempts,
+              lastError: result.error,
+              nextAttemptAt: new Date(Date.now() + backoffMins * 60 * 1000),
+            },
+          });
+        }
+      } catch (e: any) {
+        this.logger.warn(`[DLQ Cron] retry failed for row ${row.id}: ${e?.message || e}`);
+      }
+    }
   }
 }

@@ -42,6 +42,7 @@ describe('OnboardingService', () => {
       workspaceName: 'Main Property',
       ownerFullName: 'Owner',
       ownerEmail: 'owner@example.com',
+      ownerPhone: '+233500000000',
       templateType: TemplateType.APARTMENT,
     });
 

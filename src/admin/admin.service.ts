@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TemplateType } from '@prisma/client';
 import * as crypto from 'crypto';
 import { MailService } from '../mail/mail.service';
+import { AuthService } from '../auth/auth.service';
 import { isAdminEmailAllowed } from './admin-auth.util';
 import { cacheBust } from '../billing/cache';
 
@@ -44,6 +45,7 @@ export class AdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mail: MailService,
+    private readonly auth: AuthService,
   ) {}
 
   private getAdminAppUrl() {
@@ -190,6 +192,8 @@ export class AdminService {
     if (!resetToken.admin.isActive) {
       throw new UnauthorizedException('Admin account is inactive');
     }
+
+    this.assertStrongAdminPassword(password);
 
     const now = new Date();
     await this.prisma.$transaction([
@@ -806,7 +810,10 @@ export class AdminService {
   }
 
   async fixWorkspacePayment(id: string, adminId: string, adminEmail: string) {
-    const workspace = await this.prisma.workspace.findUnique({ where: { id } });
+    const workspace = await this.prisma.workspace.findUnique({
+      where: { id },
+      include: { owner: { select: { email: true, fullName: true } } },
+    });
     if (!workspace) throw new NotFoundException('Workspace not found');
 
     // Find the most recent subscription so we can set a valid renewal date.
@@ -822,6 +829,13 @@ export class AdminService {
       latestSub?.currentPeriodEnd && latestSub.currentPeriodEnd > now
         ? latestSub.currentPeriodEnd
         : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    // Capture the affected payments BEFORE we mutate them, for the audit trail.
+    const affectedPayments = await this.prisma.payment.findMany({
+      where: { workspaceId: id, status: { in: ['PENDING', 'FAILED'] } },
+      select: { id: true, amountPesewas: true, currency: true, status: true, reference: true },
+    });
+    const totalForgivenPesewas = affectedPayments.reduce((sum, p) => sum + (p.amountPesewas || 0), 0);
 
     await this.prisma.$transaction(async (tx) => {
       // Mark pending/failed payments as PAID
@@ -845,8 +859,35 @@ export class AdminService {
       }
     });
 
-    await this.audit(adminId, adminEmail, 'workspace.fix_payment', 'Workspace', id);
-    return { ok: true };
+    // Bust entitlements cache so the workspace immediately reflects ACTIVE state.
+    cacheBust(`billing:entitlements:${id}`);
+
+    // Detailed audit log: capture which payments were forgiven and the total amount.
+    await this.audit(adminId, adminEmail, 'workspace.fix_payment', 'Workspace', id, {
+      paymentIds: affectedPayments.map((p) => p.id),
+      paymentReferences: affectedPayments.map((p) => p.reference).filter(Boolean),
+      paymentCount: affectedPayments.length,
+      totalForgivenPesewas,
+      currency: affectedPayments[0]?.currency || null,
+      newNextRenewal: nextRenewal,
+    });
+
+    // Notify the workspace owner so they're not surprised by the manual fix.
+    if (workspace.owner?.email) {
+      this.mail
+        .send(
+          workspace.owner.email,
+          `Your TomaFix workspace was activated • ${workspace.name}`,
+          `<p>Hi ${workspace.owner.fullName || ''},</p>
+           <p>A TomaFix admin manually activated <b>${workspace.name}</b> after reviewing your account. Your workspace is now active and your next renewal is <b>${nextRenewal.toLocaleDateString()}</b>.</p>
+           <p>If you didn't expect this change, reply to this email.</p>
+           <p>— TomaFix</p>`,
+          { workspaceId: id },
+        )
+        .catch((e: any) => this.logger.warn(`fixWorkspacePayment owner email failed: ${e?.message || e}`));
+    }
+
+    return { ok: true, paymentsForgiven: affectedPayments.length, totalForgivenPesewas };
   }
 
   // ── Users ─────────────────────────────────────────────────────────────────
@@ -1077,12 +1118,35 @@ export class AdminService {
 
   // ── Admin Users (SUPER_ADMIN only) ────────────────────────────────────────
 
+  // Admin passwords protect the platform-level back office, so the bar is
+  // higher than for normal users: 12+ chars and at least 3 of {upper, lower,
+  // digit, symbol}. Reject anything weaker before storing the hash.
+  private assertStrongAdminPassword(password: string) {
+    const pw = String(password || '');
+    if (pw.length < 12) {
+      throw new BadRequestException('Password must be at least 12 characters');
+    }
+    const classes = [/[A-Z]/, /[a-z]/, /\d/, /[^A-Za-z0-9]/].filter((re) => re.test(pw)).length;
+    if (classes < 3) {
+      throw new BadRequestException(
+        'Password must include at least 3 of: uppercase letters, lowercase letters, digits, symbols',
+      );
+    }
+    // Cheap commons check.
+    const lowered = pw.toLowerCase();
+    const banned = ['password', 'tomafix', 'admin', 'qwerty', 'letmein', '123456'];
+    if (banned.some((w) => lowered.includes(w))) {
+      throw new BadRequestException('Password is too easy to guess. Pick something less obvious.');
+    }
+  }
+
   async createAdminUser(email: string, fullName: string, password: string, role: string) {
     assertAdminRole(role);
     const normalizedEmail = email.trim().toLowerCase();
     if (!isAdminEmailAllowed(normalizedEmail)) {
       throw new BadRequestException('Email is not in the allowed admin email list');
     }
+    this.assertStrongAdminPassword(password);
     const existing = await this.prisma.adminUser.findUnique({ where: { email: normalizedEmail } });
     if (existing) throw new BadRequestException('Admin with this email already exists');
 
@@ -1126,11 +1190,21 @@ export class AdminService {
       select: { id: true, email: true, fullName: true, role: true, isActive: true, lastLoginAt: true, createdAt: true },
     });
 
+    // If role or activation changed, force the affected admin to re-login so
+    // they can't keep using a session that grants the old (possibly elevated)
+    // permissions for the rest of the token's TTL.
+    const roleChanged = !!input.role && input.role !== existing.role;
+    const activationChanged = typeof input.isActive === 'boolean' && input.isActive !== existing.isActive;
+    if (roleChanged || activationChanged) {
+      await this.prisma.adminSession.deleteMany({ where: { adminUserId: id } });
+    }
+
     await this.audit(adminId, adminEmail, 'admin.update', 'AdminUser', id, {
       previousRole: existing.role,
       nextRole: updated.role,
       previousActive: existing.isActive,
       nextActive: updated.isActive,
+      sessionsRevoked: roleChanged || activationChanged,
     });
 
     return updated;
@@ -1256,13 +1330,31 @@ export class AdminService {
     });
   }
 
+  // Allowlist sanitizer for broadcast HTML bodies. Admins can write basic
+  // formatting (links, bold, lists, paragraphs) but not <script>, <iframe>,
+  // event-handler attributes, or javascript:/data: URLs. Belt-and-braces
+  // since the email client may sandbox it, but we don't want to ship cookie
+  // exfil from a compromised admin account.
+  private sanitizeBroadcastHtml(input: string): string {
+    return String(input || '')
+      // Drop dangerous elements entirely.
+      .replace(/<\s*(script|iframe|object|embed|link|meta|style|form|input|button|select|textarea)\b[^>]*>([\s\S]*?)<\s*\/\s*\1\s*>/gi, '')
+      .replace(/<\s*(script|iframe|object|embed|link|meta|style|form|input|button|select|textarea)\b[^>]*\/?\s*>/gi, '')
+      // Strip on*= event handlers ("onclick", "onerror", etc.).
+      .replace(/\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+      // Block javascript:/data:/vbscript: URLs in href / src.
+      .replace(/(href|src)\s*=\s*"(?:javascript|data|vbscript):[^"]*"/gi, '$1="#"')
+      .replace(/(href|src)\s*=\s*'(?:javascript|data|vbscript):[^']*'/gi, "$1='#'");
+  }
+
   async sendBroadcast(senderId: string, dto: {
     subject: string;
     body: string;
     audience: 'WORKSPACE_OWNERS' | 'ALL_USERS' | 'TEST';
     testEmail?: string;
   }) {
-    const { subject, body, audience, testEmail } = dto;
+    const { subject, audience, testEmail } = dto;
+    const body = this.sanitizeBroadcastHtml(dto.body);
     if (!subject?.trim()) throw new BadRequestException('Subject is required');
     if (!body?.trim()) throw new BadRequestException('Body is required');
 
@@ -1326,5 +1418,409 @@ export class AdminService {
     });
 
     return { ok: true, recipientCount: recipients.length, sent, failed };
+  }
+
+  // ── Plans ─────────────────────────────────────────────────────────────────
+
+  async listPlans() {
+    return this.prisma.plan.findMany({
+      orderBy: [{ template: { key: 'asc' } }, { interval: 'asc' }, { amountPesewas: 'asc' }],
+      include: {
+        template: { select: { id: true, name: true, key: true } },
+        _count: { select: { subscriptions: true } },
+      },
+    });
+  }
+
+  async createPlan(
+    adminId: string,
+    adminEmail: string,
+    input: { templateId: string; name: string; interval: 'MONTHLY' | 'YEARLY'; amountPesewas: number; currency?: string },
+  ) {
+    const name = String(input.name || '').trim();
+    if (!name) throw new BadRequestException('Plan name is required');
+    if (!['MONTHLY', 'YEARLY'].includes(input.interval)) {
+      throw new BadRequestException('Interval must be MONTHLY or YEARLY');
+    }
+    if (!Number.isFinite(input.amountPesewas) || input.amountPesewas < 0) {
+      throw new BadRequestException('amountPesewas must be a non-negative number');
+    }
+    const template = await this.prisma.template.findUnique({ where: { id: input.templateId } });
+    if (!template) throw new BadRequestException('Template not found');
+
+    const plan = await this.prisma.plan.create({
+      data: {
+        templateId: input.templateId,
+        name,
+        interval: input.interval as any,
+        amountPesewas: Math.round(input.amountPesewas),
+        currency: (input.currency || 'GHS').trim().toUpperCase(),
+      },
+    });
+
+    await this.audit(adminId, adminEmail, 'plan.create', 'Plan', plan.id, {
+      templateId: input.templateId,
+      name,
+      interval: input.interval,
+      amountPesewas: input.amountPesewas,
+    });
+    return plan;
+  }
+
+  async updatePlan(
+    adminId: string,
+    adminEmail: string,
+    id: string,
+    input: { name?: string; amountPesewas?: number; currency?: string; isActive?: boolean },
+  ) {
+    const existing = await this.prisma.plan.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('Plan not found');
+
+    const data: any = {};
+    if (input.name !== undefined) {
+      const name = String(input.name || '').trim();
+      if (!name) throw new BadRequestException('Plan name cannot be empty');
+      data.name = name;
+    }
+    if (input.amountPesewas !== undefined) {
+      if (!Number.isFinite(input.amountPesewas) || input.amountPesewas < 0) {
+        throw new BadRequestException('amountPesewas must be a non-negative number');
+      }
+      data.amountPesewas = Math.round(input.amountPesewas);
+    }
+    if (input.currency !== undefined) data.currency = String(input.currency || 'GHS').trim().toUpperCase();
+    if (typeof input.isActive === 'boolean') data.isActive = input.isActive;
+
+    const updated = await this.prisma.plan.update({ where: { id }, data });
+    await this.audit(adminId, adminEmail, 'plan.update', 'Plan', id, {
+      previous: { name: existing.name, amount: existing.amountPesewas, currency: existing.currency, isActive: existing.isActive },
+      next: { name: updated.name, amount: updated.amountPesewas, currency: updated.currency, isActive: updated.isActive },
+    });
+    return updated;
+  }
+
+  // ── Feature Flag Overrides (per-workspace, stored on Workspace.permissionPolicy) ──
+  // Shape: permissionPolicy.entitlementOverrides = { features: {...}, limits: {...} }
+
+  async getFeatureOverrides(workspaceId: string) {
+    const ws = await this.prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { id: true, name: true, planName: true, templateType: true, permissionPolicy: true },
+    });
+    if (!ws) throw new NotFoundException('Workspace not found');
+    const overrides = (ws.permissionPolicy as any)?.entitlementOverrides ?? { features: {}, limits: {} };
+    return { workspaceId: ws.id, workspaceName: ws.name, planName: ws.planName, templateType: ws.templateType, overrides };
+  }
+
+  async setFeatureOverrides(
+    adminId: string,
+    adminEmail: string,
+    workspaceId: string,
+    input: { features?: Record<string, boolean | null>; limits?: Record<string, number | null> },
+  ) {
+    const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
+    if (!ws) throw new NotFoundException('Workspace not found');
+
+    const policy = (ws.permissionPolicy as any) || {};
+    const previous = policy.entitlementOverrides || {};
+    const features = { ...(previous.features || {}) };
+    const limits = { ...(previous.limits || {}) };
+    if (input.features) {
+      for (const [k, v] of Object.entries(input.features)) {
+        if (v === null || v === undefined) delete features[k];
+        else features[k] = !!v;
+      }
+    }
+    if (input.limits) {
+      for (const [k, v] of Object.entries(input.limits)) {
+        if (v === null || v === undefined) delete limits[k];
+        else limits[k] = Number(v);
+      }
+    }
+    const nextOverrides = { features, limits };
+    const updated = await this.prisma.workspace.update({
+      where: { id: workspaceId },
+      data: { permissionPolicy: { ...policy, entitlementOverrides: nextOverrides } as any },
+      select: { id: true, permissionPolicy: true },
+    });
+    cacheBust(`billing:entitlements:${workspaceId}`);
+    await this.audit(adminId, adminEmail, 'workspace.feature_override', 'Workspace', workspaceId, {
+      previous, next: nextOverrides,
+    });
+    return { workspaceId, overrides: (updated.permissionPolicy as any)?.entitlementOverrides ?? null };
+  }
+
+  // ── Compliance / GDPR ─────────────────────────────────────────────────────
+
+  async exportUserData(adminId: string, adminEmail: string, userId: string) {
+    // The include is wider than what Prisma's strict select-types comfortably
+    // narrow at this nesting depth; cast to any so we can read the relations.
+    const user: any = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        memberships: { include: { workspace: { select: { id: true, name: true, templateType: true } } } },
+        ownedWorkspaces: { select: { id: true, name: true, status: true } },
+        otps: { select: { id: true, purpose: true, target: true, createdAt: true, consumedAt: true } },
+        passkeys: { select: { id: true, deviceName: true, createdAt: true, lastUsedAt: true } },
+        trustedDevices: { select: { id: true, deviceName: true, createdAt: true, lastUsedAt: true } },
+      },
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    // Resident records linked by email (not by FK).
+    const apartmentResidents = user.email
+      ? await this.prisma.apartmentResident.findMany({
+          where: { email: { equals: user.email, mode: 'insensitive' } },
+          include: { unit: { select: { id: true, label: true, block: true, floor: true } } },
+        })
+      : [];
+    const estateResidents = user.email
+      ? await this.prisma.estateResident.findMany({
+          where: { email: { equals: user.email, mode: 'insensitive' } },
+          include: { unit: { select: { id: true, label: true, block: true, floor: true } } },
+        })
+      : [];
+
+    await this.audit(adminId, adminEmail, 'compliance.export', 'User', userId);
+
+    return {
+      generatedAt: new Date().toISOString(),
+      user: {
+        id: user.id,
+        email: user.email,
+        phone: user.phone,
+        fullName: user.fullName,
+        emailVerifiedAt: user.emailVerifiedAt,
+        phoneVerifiedAt: user.phoneVerifiedAt,
+        createdAt: user.createdAt,
+      },
+      memberships: user.memberships,
+      ownedWorkspaces: user.ownedWorkspaces,
+      otps: user.otps,
+      passkeys: user.passkeys,
+      trustedDevices: user.trustedDevices,
+      apartmentResidentRecords: apartmentResidents,
+      estateResidentRecords: estateResidents,
+    };
+  }
+
+  async eraseUser(adminId: string, adminEmail: string, userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    // Anonymize rather than hard-delete to preserve referential integrity on
+    // memberships, audit logs, etc. Replace identifiable fields with stable tombstones.
+    const anonEmail = `erased+${userId}@deleted.tomafix.invalid`;
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        email: anonEmail,
+        phone: null,
+        fullName: '[Erased per GDPR request]',
+        emailVerifiedAt: null,
+        phoneVerifiedAt: null,
+      },
+    });
+    // Drop active sessions, OTPs, passkeys, trusted devices.
+    await Promise.all([
+      this.prisma.otpCode.deleteMany({ where: { userId } }),
+      this.prisma.passkeyCredential.deleteMany({ where: { userId } }),
+      this.prisma.trustedDevice.deleteMany({ where: { userId } }),
+    ]);
+
+    await this.audit(adminId, adminEmail, 'compliance.erase', 'User', userId, {
+      anonymizedEmail: anonEmail,
+      previousEmail: user.email,
+    });
+    return { ok: true, anonymizedEmail: anonEmail };
+  }
+
+  // ── Impersonation ─────────────────────────────────────────────────────────
+
+  async impersonateUser(
+    adminId: string,
+    adminEmail: string,
+    userId: string,
+    input: { reason?: string; workspaceId?: string },
+  ) {
+    const reason = String(input.reason || '').trim();
+    if (reason.length < 5) {
+      throw new BadRequestException('A reason (5+ chars) is required for impersonation');
+    }
+    const targetUser = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!targetUser) throw new NotFoundException('Target user not found');
+    if (!targetUser.email) throw new BadRequestException('Target user has no email; cannot impersonate');
+
+    // Mint a session token via the existing user-auth flow. Audit it loudly so
+    // a security review can always trace which admin acted as which user.
+    const session = await this.auth.createSessionForUser(userId, input.workspaceId);
+
+    await this.audit(adminId, adminEmail, 'security.impersonation', 'User', userId, {
+      targetEmail: targetUser.email,
+      reason,
+      preferredWorkspaceId: input.workspaceId || null,
+      // Token TTL is whatever createSessionForUser sets (currently 7d). We log
+      // the jti-equivalent (the token itself isn't logged, just the issuance).
+      issuedAt: new Date().toISOString(),
+    });
+
+    return {
+      ok: true,
+      token: session.token,
+      user: session.user,
+      memberships: session.memberships,
+      defaultWorkspaceId: session.defaultWorkspaceId,
+      // The frontend should warn the admin that they're now acting as the target.
+      impersonation: { actorAdminId: adminId, actorAdminEmail: adminEmail, targetUserId: userId, reason },
+    };
+  }
+
+  // ── Churn metrics ─────────────────────────────────────────────────────────
+
+  async churnMetrics() {
+    const now = new Date();
+    const thirtyAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const sixtyAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+
+    const [activeNow, churnedLast30, churnedPrev30, totalEverActivated] = await Promise.all([
+      this.prisma.workspace.count({ where: { status: 'ACTIVE' } }),
+      this.prisma.workspace.count({
+        where: {
+          status: { in: ['SUSPENDED'] as any },
+          updatedAt: { gte: thirtyAgo },
+        },
+      }),
+      this.prisma.workspace.count({
+        where: {
+          status: { in: ['SUSPENDED'] as any },
+          updatedAt: { gte: sixtyAgo, lt: thirtyAgo },
+        },
+      }),
+      this.prisma.workspace.count({ where: { ownerVerifiedAt: { not: null } } }),
+    ]);
+
+    const churnRate30 = activeNow + churnedLast30 > 0
+      ? Number(((churnedLast30 / (activeNow + churnedLast30)) * 100).toFixed(2))
+      : 0;
+
+    const recentChurn = await this.prisma.workspace.findMany({
+      where: { status: { in: ['SUSPENDED'] as any }, updatedAt: { gte: thirtyAgo } },
+      orderBy: { updatedAt: 'desc' },
+      take: 50,
+      select: {
+        id: true, name: true, templateType: true, planName: true,
+        billingStatus: true, updatedAt: true,
+        owner: { select: { email: true, fullName: true } },
+      },
+    });
+
+    return {
+      activeNow,
+      churnedLast30,
+      churnedPrev30,
+      churnRate30,
+      delta: churnedLast30 - churnedPrev30,
+      totalEverActivated,
+      recentChurn,
+    };
+  }
+
+  // ── Reconciliation: payments grouped by status over a window ─────────────
+
+  async reconciliation(days: number) {
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const grouped = await this.prisma.payment.groupBy({
+      by: ['status'],
+      where: { createdAt: { gte: since } },
+      _count: { _all: true },
+      _sum: { amountPesewas: true },
+    });
+    const recent = await this.prisma.payment.findMany({
+      where: { createdAt: { gte: since } },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: {
+        id: true, reference: true, status: true, amountPesewas: true, currency: true,
+        createdAt: true, paidAt: true,
+        workspace: { select: { id: true, name: true } },
+        plan: { select: { id: true, name: true, interval: true } },
+      },
+    });
+    return {
+      windowDays: days,
+      since,
+      buckets: grouped.map((g: any) => ({
+        status: g.status,
+        count: g._count?._all ?? 0,
+        amountPesewas: g._sum?.amountPesewas || 0,
+      })),
+      // Map amountPesewas -> amount for the frontend's existing shape.
+      recentPayments: recent.map((p) => ({
+        ...p,
+        amount: p.amountPesewas,
+      })),
+    };
+  }
+
+  // ── Workspace Health: per-workspace summary ──────────────────────────────
+
+  async workspaceHealth() {
+    const rows = await this.prisma.workspace.findMany({
+      where: { status: { in: ['ACTIVE', 'PENDING_PAYMENT'] as any } },
+      orderBy: { updatedAt: 'desc' },
+      take: 200,
+      select: {
+        id: true, name: true, templateType: true, planName: true,
+        status: true, billingStatus: true, nextRenewal: true,
+        _count: { select: { members: true } },
+      },
+    });
+    const now = Date.now();
+    return {
+      generatedAt: new Date().toISOString(),
+      rows: rows.map((r) => {
+        const due = r.nextRenewal ? r.nextRenewal.getTime() - now : null;
+        const dueDays = due === null ? null : Math.round(due / (24 * 60 * 60 * 1000));
+        let healthFlag: 'ok' | 'attention' | 'critical' = 'ok';
+        if (r.billingStatus === 'PAST_DUE' || r.status === 'PENDING_PAYMENT') healthFlag = 'attention';
+        if (dueDays !== null && dueDays < 0) healthFlag = 'critical';
+        return {
+          id: r.id, name: r.name, templateType: r.templateType, planName: r.planName,
+          status: r.status, billingStatus: r.billingStatus,
+          nextRenewal: r.nextRenewal, dueDays, members: r._count.members, healthFlag,
+        };
+      }),
+    };
+  }
+
+  // ── Onboarding funnel ────────────────────────────────────────────────────
+
+  async onboardingFunnel(days: number) {
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    const [created, otpVerified, paymentDone, activeNow] = await Promise.all([
+      this.prisma.workspace.count({ where: { createdAt: { gte: since } } }),
+      this.prisma.workspace.count({
+        where: { createdAt: { gte: since }, ownerVerifiedAt: { not: null } },
+      }),
+      this.prisma.workspace.count({
+        where: { createdAt: { gte: since }, billingStatus: { in: ['ACTIVE'] as any } },
+      }),
+      this.prisma.workspace.count({
+        where: { createdAt: { gte: since }, status: 'ACTIVE' },
+      }),
+    ]);
+
+    const conv = (a: number, b: number) => (b > 0 ? Number(((a / b) * 100).toFixed(2)) : 0);
+    return {
+      windowDays: days,
+      since,
+      stages: [
+        { key: 'created', label: 'Workspace created', count: created },
+        { key: 'otp', label: 'Owner email verified', count: otpVerified, conversion: conv(otpVerified, created) },
+        { key: 'paid', label: 'Payment completed', count: paymentDone, conversion: conv(paymentDone, otpVerified) },
+        { key: 'active', label: 'Workspace active', count: activeNow, conversion: conv(activeNow, paymentDone) },
+      ],
+    };
   }
 }

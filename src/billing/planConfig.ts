@@ -1,7 +1,13 @@
 import { TemplateType } from '@prisma/client';
 import { PlanName } from '../types/billing';
 
-type PlanLimits = { properties: number; units: number; managers: number };
+type PlanLimits = {
+  properties: number;
+  units: number;
+  managers: number;
+  residents: number;
+  requestsPerMonth: number;
+};
 type PlanFeatures = {
   blocks: boolean;
   staff: boolean;
@@ -31,7 +37,7 @@ export const PLAN_MAP: Record<PlanName, PlanConfig> = {
   Starter: {
     pricePesewas: 9900,
     currency: 'GHS',
-    limits: { properties: 1, units: 20, managers: 1 },
+    limits: { properties: 1, units: 20, managers: 1, residents: 50, requestsPerMonth: 100 },
     features: {
       blocks: false,
       staff: false,
@@ -53,7 +59,7 @@ export const PLAN_MAP: Record<PlanName, PlanConfig> = {
   Growth: {
     pricePesewas: 19900,
     currency: 'GHS',
-    limits: { properties: 3, units: 120, managers: 3 },
+    limits: { properties: 3, units: 120, managers: 3, residents: 300, requestsPerMonth: 1000 },
     features: {
       blocks: true,
       staff: true,
@@ -74,7 +80,7 @@ export const PLAN_MAP: Record<PlanName, PlanConfig> = {
   TomaPrime: {
     pricePesewas: 39900,
     currency: 'GHS',
-    limits: { properties: 5, units: 250, managers: 8 },
+    limits: { properties: 5, units: 250, managers: 8, residents: 1500, requestsPerMonth: 100000 },
     features: {
       blocks: true,
       staff: true,
@@ -105,20 +111,20 @@ const PLAN_ALIASES: Record<string, PlanName> = {
 const TEMPLATE_LIMIT_OVERRIDES: Partial<Record<TemplateType, Record<PlanName, PlanLimits>>> = {
   // APARTMENT: properties = buildings (always 1 per workspace), units = apartment units, managers = staff accounts
   APARTMENT: {
-    Starter: { properties: 1, units: 25, managers: 2 },
-    Growth: { properties: 1, units: 120, managers: 8 },
-    TomaPrime: { properties: 1, units: 300, managers: 999 },
+    Starter: { properties: 1, units: 25, managers: 2, residents: 50, requestsPerMonth: 200 },
+    Growth: { properties: 1, units: 120, managers: 8, residents: 300, requestsPerMonth: 2000 },
+    TomaPrime: { properties: 1, units: 300, managers: 999, residents: 1500, requestsPerMonth: 100000 },
   },
   ESTATE: {
-    Starter: { properties: 2, units: 60, managers: 1 },
-    Growth: { properties: 6, units: 220, managers: 3 },
-    TomaPrime: { properties: 15, units: 600, managers: 8 },
+    Starter: { properties: 2, units: 60, managers: 1, residents: 200, requestsPerMonth: 500 },
+    Growth: { properties: 6, units: 220, managers: 3, residents: 800, requestsPerMonth: 4000 },
+    TomaPrime: { properties: 15, units: 600, managers: 8, residents: 3000, requestsPerMonth: 100000 },
   },
   // OFFICE: properties = number of office locations, units = number of areas/departments
   OFFICE: {
-    Starter: { properties: 25, units: 10, managers: 1 },
-    Growth: { properties: 150, units: 35, managers: 3 },
-    TomaPrime: { properties: 500, units: 120, managers: 10 },
+    Starter: { properties: 25, units: 10, managers: 1, residents: 50, requestsPerMonth: 200 },
+    Growth: { properties: 150, units: 35, managers: 3, residents: 300, requestsPerMonth: 2000 },
+    TomaPrime: { properties: 500, units: 120, managers: 10, residents: 1500, requestsPerMonth: 100000 },
   },
 };
 
@@ -235,4 +241,27 @@ export function getEntitlements(planName: PlanName, templateType?: TemplateType)
     limits: override ?? base.limits,
     features: featureOverride ? { ...base.features, ...featureOverride } : base.features,
   };
+}
+
+// Layer per-workspace overrides on top of plan/template entitlements.
+// Admins set these via AdminFeatureFlags; they're stored on
+// Workspace.permissionPolicy.entitlementOverrides.
+export function applyWorkspaceOverrides(
+  entitlements: ReturnType<typeof getEntitlements>,
+  overrides?: { features?: Record<string, boolean>; limits?: Record<string, number> } | null,
+) {
+  if (!overrides) return entitlements;
+  const features = { ...entitlements.features } as Record<string, boolean>;
+  const limits = { ...entitlements.limits } as Record<string, number>;
+  if (overrides.features) {
+    for (const [k, v] of Object.entries(overrides.features)) {
+      if (typeof v === 'boolean' && k in features) features[k] = v;
+    }
+  }
+  if (overrides.limits) {
+    for (const [k, v] of Object.entries(overrides.limits)) {
+      if (typeof v === 'number' && k in limits) limits[k] = v;
+    }
+  }
+  return { ...entitlements, features: features as typeof entitlements.features, limits: limits as typeof entitlements.limits };
 }

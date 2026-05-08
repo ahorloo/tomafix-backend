@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { MemberRole } from '@prisma/client';
 import { AuthService } from './auth.service';
 import { AuthGuard } from './auth.guard';
@@ -18,6 +19,7 @@ export class WorkspaceMembersController {
   }
 
   @WorkspacePermission('users:manage')
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
   @Post('staff')
   createStaff(
     @Param('workspaceId') workspaceId: string,

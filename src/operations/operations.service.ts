@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InspectionScope, InspectionStatus, MemberRole, NoticeAudience, ResidentStatus, TemplateType } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -172,26 +173,89 @@ export class OperationsService {
     return ws;
   }
 
-  async listNotices(workspaceId: string, estateId?: string) {
+  async listNotices(workspaceId: string, estateId?: string, search?: string) {
     const ws = await this.assertOperationsWorkspace(workspaceId);
     const resolvedEstateId = ws.templateType !== TemplateType.OFFICE
       ? await this.resolveEstateIdForWorkspace(workspaceId, estateId)
       : null;
 
+    const term = String(search || '').trim();
+    const searchClause = term
+      ? {
+          OR: [
+            { title: { contains: term, mode: 'insensitive' as const } },
+            { body: { contains: term, mode: 'insensitive' as const } },
+          ],
+        }
+      : {};
+
     return this.noticeDelegate(ws.templateType).findMany({
       where:
         ws.templateType === TemplateType.ESTATE
-          ? { workspaceId, ...(resolvedEstateId ? { estateId: resolvedEstateId } : {}) }
-          : { workspaceId },
-      orderBy: { createdAt: 'desc' },
+          ? { workspaceId, ...(resolvedEstateId ? { estateId: resolvedEstateId } : {}), ...searchClause }
+          : { workspaceId, ...searchClause },
+      orderBy:
+        ws.templateType === TemplateType.OFFICE
+          ? { createdAt: 'desc' }
+          : [{ pinned: 'desc' }, { createdAt: 'desc' }],
     });
   }
 
-  async createNotice(workspaceId: string, dto: { title: string; body: string; audience?: NoticeAudience; estateId?: string }) {
+  async acknowledgeNotice(workspaceId: string, noticeId: string, userId: string) {
+    const ws = await this.assertOperationsWorkspace(workspaceId);
+    if (ws.templateType === TemplateType.OFFICE) {
+      throw new BadRequestException('Acknowledgements are only available on property notices');
+    }
+    const repo = this.noticeDelegate(ws.templateType);
+    const row = await repo.findFirst({ where: { id: noticeId, workspaceId } });
+    if (!row) throw new NotFoundException('Notice not found');
+    const acks: Array<{ userId: string; at: string }> = Array.isArray(row.acknowledgements)
+      ? (row.acknowledgements as any)
+      : [];
+    if (!acks.some((a) => a.userId === userId)) {
+      acks.push({ userId, at: new Date().toISOString() });
+    }
+    return repo.update({ where: { id: noticeId }, data: { acknowledgements: acks as any } });
+  }
+
+  async createNotice(
+    workspaceId: string,
+    dto: {
+      title: string;
+      body: string;
+      audience?: NoticeAudience;
+      estateId?: string;
+      targetBlock?: string | null;
+      targetFloor?: string | null;
+      targetUnitId?: string | null;
+      pinned?: boolean;
+      acknowledgeRequired?: boolean;
+    },
+  ) {
     const ws = await this.assertOperationsWorkspace(workspaceId);
     const resolvedEstateId = ws.templateType !== TemplateType.OFFICE
       ? await this.resolveEstateIdForWorkspace(workspaceId, dto.estateId)
       : null;
+
+    // Office notices don't have spatial targeting columns yet; only Apartment/Estate do.
+    const supportsTargeting = ws.templateType !== TemplateType.OFFICE;
+    const targetBlock = supportsTargeting && dto.targetBlock ? String(dto.targetBlock).trim() || null : null;
+    const targetFloor = supportsTargeting && dto.targetFloor ? String(dto.targetFloor).trim() || null : null;
+    let targetUnitId: string | null = null;
+    if (supportsTargeting && dto.targetUnitId) {
+      const id = String(dto.targetUnitId).trim();
+      if (id) {
+        const unit =
+          ws.templateType === TemplateType.ESTATE
+            ? await this.prisma.estateUnit.findFirst({ where: { id, workspaceId } })
+            : await this.prisma.apartmentUnit.findFirst({ where: { id, workspaceId } });
+        if (!unit) throw new BadRequestException('Target unit not found in this workspace');
+        targetUnitId = id;
+      }
+    }
+
+    const pinned = !!dto.pinned;
+    const acknowledgeRequired = !!dto.acknowledgeRequired;
 
     const notice = await this.noticeDelegate(ws.templateType).create({
       data:
@@ -202,15 +266,35 @@ export class OperationsService {
               title: dto.title.trim(),
               body: dto.body.trim(),
               audience: dto.audience ?? NoticeAudience.ALL,
+              targetBlock,
+              targetFloor,
+              targetUnitId,
+              pinned,
+              acknowledgeRequired,
               seenBy: [],
+              acknowledgements: [],
             }
-          : {
-              workspaceId,
-              title: dto.title.trim(),
-              body: dto.body.trim(),
-              audience: dto.audience ?? NoticeAudience.ALL,
-              seenBy: [],
-            },
+          : ws.templateType === TemplateType.APARTMENT
+            ? {
+                workspaceId,
+                title: dto.title.trim(),
+                body: dto.body.trim(),
+                audience: dto.audience ?? NoticeAudience.ALL,
+                targetBlock,
+                targetFloor,
+                targetUnitId,
+                pinned,
+                acknowledgeRequired,
+                seenBy: [],
+                acknowledgements: [],
+              }
+            : {
+                workspaceId,
+                title: dto.title.trim(),
+                body: dto.body.trim(),
+                audience: dto.audience ?? NoticeAudience.ALL,
+                seenBy: [],
+              },
     });
 
     try {
@@ -317,7 +401,7 @@ export class OperationsService {
 
   async createInspection(
     workspaceId: string,
-    dto: { title: string; scope?: InspectionScope; unitId?: string; block?: string; floor?: string; dueDate: string; checklist?: string[]; estateId?: string },
+    dto: { title: string; scope?: InspectionScope; inspectionType?: 'ROUTINE' | 'MOVE_IN' | 'MOVE_OUT'; unitId?: string; block?: string; floor?: string; dueDate: string; checklist?: string[]; estateId?: string },
   ) {
     const ws = await this.assertOperationsWorkspace(workspaceId);
     const resolvedEstateId = ws.templateType !== TemplateType.OFFICE
@@ -349,6 +433,15 @@ export class OperationsService {
       throw new BadRequestException('block and floor are required for FLOOR inspections');
     }
 
+    const inspectionType = dto.inspectionType || 'ROUTINE';
+    if (!['ROUTINE', 'MOVE_IN', 'MOVE_OUT'].includes(inspectionType)) {
+      throw new BadRequestException('inspectionType must be ROUTINE, MOVE_IN or MOVE_OUT');
+    }
+    // Move-in/move-out only make sense for a specific unit.
+    if ((inspectionType === 'MOVE_IN' || inspectionType === 'MOVE_OUT') && !unitId) {
+      throw new BadRequestException('Move-in / move-out inspections must be scoped to a specific unit');
+    }
+
     if (ws.templateType === TemplateType.ESTATE) {
       return this.prisma.estateInspection.create({
         data: {
@@ -356,6 +449,7 @@ export class OperationsService {
           estateId: resolvedEstateId,
           title: dto.title.trim(),
           scope,
+          inspectionType,
           unitId,
           block,
           floor,
@@ -371,6 +465,7 @@ export class OperationsService {
           workspaceId,
           title: dto.title.trim(),
           scope,
+          inspectionType,
           unitId,
           block,
           floor,
@@ -410,5 +505,74 @@ export class OperationsService {
         result: dto.result !== undefined ? dto.result : undefined,
       },
     });
+  }
+
+  // Spawn a maintenance request from an inspection finding.
+  // The request is auto-scoped to the inspection's unit (when one is set);
+  // otherwise it's left unit-less and the admin can re-assign.
+  async convertInspectionToRequest(
+    workspaceId: string,
+    inspectionId: string,
+    dto: { finding: string; priority?: string; category?: string },
+  ) {
+    const ws = await this.assertOperationsWorkspace(workspaceId);
+    if (ws.templateType !== TemplateType.APARTMENT && ws.templateType !== TemplateType.ESTATE) {
+      throw new BadRequestException('Inspection-to-request conversion is only available on property templates');
+    }
+
+    const finding = String(dto.finding || '').trim();
+    if (!finding) throw new BadRequestException('finding is required');
+
+    const repo = this.inspectionDelegate(ws.templateType);
+    const inspection = await repo.findFirst({ where: { id: inspectionId, workspaceId } });
+    if (!inspection) throw new NotFoundException('Inspection not found');
+    if (!inspection.unitId) {
+      throw new BadRequestException(
+        'This inspection is not scoped to a single unit. Re-create the inspection at the unit scope or create the request manually.',
+      );
+    }
+
+    const priority = (dto.priority as any) || 'NORMAL';
+    const category = dto.category?.trim() || 'Inspection follow-up';
+    const title = `[Inspection] ${inspection.title}`.slice(0, 200);
+    const description = `Follow-up from inspection on ${inspection.dueDate?.toISOString?.() || ''}.\n\nFinding: ${finding}`;
+
+    const request = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateRequest.create({
+          data: {
+            id: randomUUID(),
+            workspaceId,
+            unitId: inspection.unitId,
+            title,
+            description,
+            category,
+            priority: priority as any,
+          },
+          include: { unit: { select: { id: true, label: true, block: true, floor: true } } },
+        })
+      : await this.prisma.apartmentRequest.create({
+          data: {
+            id: randomUUID(),
+            workspaceId,
+            unitId: inspection.unitId,
+            title,
+            description,
+            category,
+            priority: priority as any,
+          },
+          include: { unit: { select: { id: true, label: true, block: true, floor: true } } },
+        });
+
+    // Stamp the inspection.result so the conversion is visible from the inspection too.
+    await repo.update({
+      where: { id: inspectionId },
+      data: {
+        result: inspection.result
+          ? `${inspection.result}\n[Converted to request ${request.id}] ${finding}`
+          : `[Converted to request ${request.id}] ${finding}`,
+      },
+    });
+
+    return request;
   }
 }

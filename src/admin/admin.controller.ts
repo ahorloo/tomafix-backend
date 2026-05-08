@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { AdminGuard } from './admin.guard';
 import { AdminRoles } from './admin-roles.decorator';
 import { AdminService } from './admin.service';
@@ -7,27 +8,31 @@ import { AdminService } from './admin.service';
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
 
-  // ── Auth (no guard) ───────────────────────────────────────────────────────
+  // ── Auth (no guard, but rate-limited to deter brute-force) ───────────────
 
   @Post('auth/login')
+  @Throttle({ default: { ttl: 60_000, limit: 8 } })
   @HttpCode(HttpStatus.OK)
   login(@Body() body: { email: string; password: string }) {
     return this.adminService.login(body.email, body.password);
   }
 
   @Post('auth/otp/verify')
+  @Throttle({ default: { ttl: 60_000, limit: 12 } })
   @HttpCode(HttpStatus.OK)
   verifyOtp(@Body() body: { token: string; code: string }) {
     return this.adminService.verifyAdminOtp(body.token, body.code);
   }
 
   @Post('auth/password-reset/request')
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
   @HttpCode(HttpStatus.OK)
   requestPasswordReset(@Body() body: { email: string }) {
     return this.adminService.requestPasswordReset(body.email);
   }
 
   @Post('auth/password-reset/confirm')
+  @Throttle({ default: { ttl: 60_000, limit: 8 } })
   @HttpCode(HttpStatus.OK)
   confirmPasswordReset(@Body() body: { token: string; password: string }) {
     return this.adminService.resetAdminPassword(body.token, body.password);
@@ -240,5 +245,120 @@ export class AdminController {
     @Req() req: any,
   ) {
     return this.adminService.sendBroadcast(req.adminUser.id, body);
+  }
+
+  // ── Plans (SUPER_ADMIN, BILLING_ADMIN) ────────────────────────────────────
+
+  @Get('plans')
+  @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'BILLING_ADMIN')
+  listPlans() {
+    return this.adminService.listPlans();
+  }
+
+  @Post('plans')
+  @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'BILLING_ADMIN')
+  createPlan(
+    @Body() body: { templateId: string; name: string; interval: 'MONTHLY' | 'YEARLY'; amountPesewas: number; currency?: string },
+    @Req() req: any,
+  ) {
+    return this.adminService.createPlan(req.adminUser.id, req.adminUser.email, body);
+  }
+
+  @Patch('plans/:id')
+  @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'BILLING_ADMIN')
+  updatePlan(
+    @Param('id') id: string,
+    @Body() body: { name?: string; amountPesewas?: number; currency?: string; isActive?: boolean },
+    @Req() req: any,
+  ) {
+    return this.adminService.updatePlan(req.adminUser.id, req.adminUser.email, id, body);
+  }
+
+  // ── Feature Flag Overrides (SUPER_ADMIN, OPS_ADMIN) ──────────────────────
+
+  @Get('feature-overrides/:workspaceId')
+  @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'OPS_ADMIN')
+  getFeatureOverrides(@Param('workspaceId') workspaceId: string) {
+    return this.adminService.getFeatureOverrides(workspaceId);
+  }
+
+  @Patch('feature-overrides/:workspaceId')
+  @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'OPS_ADMIN')
+  setFeatureOverrides(
+    @Param('workspaceId') workspaceId: string,
+    @Body() body: { features?: Record<string, boolean | null>; limits?: Record<string, number | null> },
+    @Req() req: any,
+  ) {
+    return this.adminService.setFeatureOverrides(req.adminUser.id, req.adminUser.email, workspaceId, body);
+  }
+
+  // ── Compliance / GDPR (SUPER_ADMIN) ──────────────────────────────────────
+
+  @Get('compliance/user-data/:userId')
+  @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN')
+  exportUserData(@Param('userId') userId: string, @Req() req: any) {
+    return this.adminService.exportUserData(req.adminUser.id, req.adminUser.email, userId);
+  }
+
+  @Post('compliance/erase-user/:userId')
+  @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN')
+  eraseUser(@Param('userId') userId: string, @Req() req: any) {
+    return this.adminService.eraseUser(req.adminUser.id, req.adminUser.email, userId);
+  }
+
+  // ── Impersonation (SUPER_ADMIN only — highly audited) ────────────────────
+
+  @Post('impersonation/:userId')
+  @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN')
+  impersonate(
+    @Param('userId') userId: string,
+    @Body() body: { reason?: string; workspaceId?: string },
+    @Req() req: any,
+  ) {
+    return this.adminService.impersonateUser(req.adminUser.id, req.adminUser.email, userId, body);
+  }
+
+  // ── Churn metrics (SUPER_ADMIN, BILLING_ADMIN, OPS_ADMIN) ────────────────
+
+  @Get('metrics/churn')
+  @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'BILLING_ADMIN', 'OPS_ADMIN')
+  churnMetrics() {
+    return this.adminService.churnMetrics();
+  }
+
+  // ── Reconciliation (BILLING_ADMIN, SUPER_ADMIN) ──────────────────────────
+
+  @Get('reconciliation')
+  @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'BILLING_ADMIN')
+  reconciliation(@Query('days') days?: string) {
+    return this.adminService.reconciliation(Number(days) || 30);
+  }
+
+  // ── Workspace Health (OPS_ADMIN, SUPER_ADMIN) ────────────────────────────
+
+  @Get('workspace-health')
+  @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'OPS_ADMIN')
+  workspaceHealth() {
+    return this.adminService.workspaceHealth();
+  }
+
+  // ── Onboarding funnel (OPS_ADMIN, SUPER_ADMIN) ───────────────────────────
+
+  @Get('metrics/onboarding-funnel')
+  @UseGuards(AdminGuard)
+  @AdminRoles('SUPER_ADMIN', 'OPS_ADMIN', 'BILLING_ADMIN')
+  onboardingFunnel(@Query('days') days?: string) {
+    return this.adminService.onboardingFunnel(Number(days) || 30);
   }
 }

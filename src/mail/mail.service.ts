@@ -1,13 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
   private transporter: nodemailer.Transporter | null = null;
 
-  constructor(private config: ConfigService) {
+  constructor(private config: ConfigService, private prisma: PrismaService) {
     const host = config.get('SMTP_HOST');
     const user = config.get('SMTP_USER');
     if (host && user) {
@@ -70,12 +71,14 @@ export class MailService {
     return true;
   }
 
-  async send(to: string, subject: string, html: string) {
+  async send(to: string, subject: string, html: string, opts?: { workspaceId?: string | null }) {
     const brandedHtml = this.wrapHtml(html);
+    let lastError: string | null = null;
 
     try {
       const sentViaResend = await this.sendWithResend(to, subject, brandedHtml).catch((e) => {
-        this.logger.error(`Resend email failed for ${to}: ${e.message}`);
+        lastError = `Resend: ${e?.message || String(e)}`;
+        this.logger.error(`Resend email failed for ${to}: ${e?.message || e}`);
         return false;
       });
       if (sentViaResend) {
@@ -84,7 +87,15 @@ export class MailService {
       }
 
       if (!this.transporter) {
-        this.logger.warn(`[MAIL SKIPPED] To: ${to} | Subject: ${subject}`);
+        // No transport configured. In production this is a hard failure;
+        // in dev (no Resend, no SMTP) we treat it as a no-op skip.
+        const isProd = (this.config.get('NODE_ENV') || '').toLowerCase() === 'production';
+        if (!isProd && !lastError) {
+          this.logger.warn(`[MAIL SKIPPED] To: ${to} | Subject: ${subject}`);
+          return;
+        }
+        if (!lastError) lastError = 'No mail transport configured';
+        await this.enqueueDeadLetter(to, subject, html, lastError, opts?.workspaceId ?? null);
         return;
       }
 
@@ -96,7 +107,57 @@ export class MailService {
       });
       this.logger.log(`Email sent via SMTP to ${to}: ${subject}`);
     } catch (e: any) {
-      this.logger.error(`Failed to send email to ${to}: ${e.message}`);
+      lastError = `SMTP: ${e?.message || String(e)}`;
+      this.logger.error(`Failed to send email to ${to}: ${e?.message || e}`);
+      await this.enqueueDeadLetter(to, subject, html, lastError, opts?.workspaceId ?? null);
+    }
+  }
+
+  private async enqueueDeadLetter(
+    to: string,
+    subject: string,
+    html: string,
+    error: string,
+    workspaceId: string | null,
+  ) {
+    try {
+      await this.prisma.notificationDeadLetter.create({
+        data: {
+          workspaceId: workspaceId || null,
+          channel: 'EMAIL',
+          recipient: to,
+          subject,
+          payload: { html },
+          status: 'PENDING',
+          attempts: 1,
+          lastError: error,
+          // Backoff: first retry in 60s; the cron will exponentially back off after.
+          nextAttemptAt: new Date(Date.now() + 60_000),
+        },
+      });
+    } catch (e: any) {
+      this.logger.error(`Could not enqueue mail to DLQ for ${to}: ${e?.message || e}`);
+    }
+  }
+
+  // Internal: try to send a previously-queued payload. Used by scheduler.
+  async retryEmail(to: string, subject: string, html: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    const brandedHtml = this.wrapHtml(html);
+    try {
+      const sent = await this.sendWithResend(to, subject, brandedHtml).catch((e) => {
+        throw new Error(`Resend: ${e?.message || e}`);
+      });
+      if (sent) return { ok: true };
+      if (!this.transporter) return { ok: false, error: 'No mail transport configured' };
+      await this.transporter.sendMail({
+        from: this.config.get('SMTP_FROM') || 'TomaFix <noreply@tomafix.com>',
+        to,
+        subject,
+        html: brandedHtml,
+      });
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || String(e) };
     }
   }
 

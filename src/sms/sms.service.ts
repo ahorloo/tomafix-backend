@@ -26,10 +26,18 @@ export class SmsService {
       return { ok: false, skipped: true, reason: 'missing_message_or_phone' as const };
     }
 
+    const tag = args.tag ? `[${args.tag}] ` : '';
+
+    // Hard kill switch — stays on until Hubtel company registration completes.
+    // When this is true, no SMS request will be made under any circumstance.
+    if (String(process.env.SMS_KILL_SWITCH || 'false').toLowerCase() === 'true') {
+      this.logger.log(`${tag}SMS kill switch active — skipping send to ${to}`);
+      return { ok: false, skipped: true, reason: 'kill_switch' as const };
+    }
+
     const hubtel = getHubtelSmsConfig(process.env);
     const provider = hubtel.provider;
     const senderId = String(args.senderId || hubtel.senderId || '').trim();
-    const tag = args.tag ? `[${args.tag}] ` : '';
 
     if (provider === 'none') {
       this.logger.log(`${tag}SMS skipped because SMS_PROVIDER=none -> ${to}`);

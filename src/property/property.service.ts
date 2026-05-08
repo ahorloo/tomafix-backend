@@ -530,15 +530,35 @@ export class PropertyService {
     const existing = await repo.findFirst({ where: { id: workOrderId, workspaceId } });
     if (!existing) throw new NotFoundException('Work order not found');
 
+    const nextStatus = dto.status ?? existing.status;
     const completedAt =
-      dto.status === 'COMPLETED' && existing.status !== 'COMPLETED'
+      nextStatus === 'COMPLETED' && existing.status !== 'COMPLETED'
         ? new Date()
         : existing.completedAt;
+
+    // WAITING requires a reason; transitioning out of WAITING clears it.
+    let waitingReason: string | null | undefined = undefined;
+    if (nextStatus === 'WAITING') {
+      const provided = dto.waitingReason !== undefined ? String(dto.waitingReason || '').trim() : (existing.waitingReason || '').trim();
+      if (!provided) {
+        throw new BadRequestException('waitingReason is required when status is WAITING');
+      }
+      waitingReason = provided;
+    } else if (existing.status === 'WAITING' && nextStatus !== 'WAITING') {
+      waitingReason = null;
+    } else if (dto.waitingReason !== undefined) {
+      waitingReason = dto.waitingReason ? String(dto.waitingReason).trim() : null;
+    }
+
+    // If status is moving back below COMPLETED (e.g. reopened), clear breach alert flag
+    // so the scheduler can re-alert if the new SLA is missed.
+    const slaBreachAlertedAt =
+      existing.status === 'COMPLETED' && nextStatus !== 'COMPLETED' ? null : undefined;
 
     return repo.update({
       where: { id: workOrderId },
       data: {
-        status: dto.status ?? existing.status,
+        status: nextStatus,
         priority: dto.priority ?? existing.priority,
         assignedToUserId:
           dto.assignedToUserId !== undefined ? dto.assignedToUserId : existing.assignedToUserId,
@@ -552,6 +572,8 @@ export class PropertyService {
         actualCost:
           dto.actualCost !== undefined ? parseFloat(String(dto.actualCost)) : existing.actualCost,
         completedAt,
+        ...(waitingReason !== undefined ? { waitingReason } : {}),
+        ...(slaBreachAlertedAt !== undefined ? { slaBreachAlertedAt } : {}),
       },
       include: {
         vendor: { select: { id: true, name: true, phone: true } },
@@ -587,13 +609,14 @@ export class PropertyService {
   async getWorkOrderStats(workspaceId: string) {
     const ws = await this.assertPropertyWorkspace(workspaceId);
     const repo = this.workOrderDelegate(ws.templateType);
-    const [open, inProgress, completed, total] = await Promise.all([
+    const [open, inProgress, waiting, completed, total] = await Promise.all([
       repo.count({ where: { workspaceId, status: 'OPEN' } }),
       repo.count({ where: { workspaceId, status: 'IN_PROGRESS' } }),
+      repo.count({ where: { workspaceId, status: 'WAITING' } }),
       repo.count({ where: { workspaceId, status: 'COMPLETED' } }),
       repo.count({ where: { workspaceId } }),
     ]);
-    return { open, inProgress, completed, total };
+    return { open, inProgress, waiting, completed, total };
   }
 
   // ── Property Community ──────────────────────────────────────────────────────
@@ -1431,5 +1454,230 @@ export class PropertyService {
       .reduce((s, c) => s + c.outstanding, 0);
 
     return { totalBilled, totalPaid, totalOutstanding, overdue, charges: balanceSummary };
+  }
+
+  // ── Request Categories ──────────────────────────────────────────────────────
+
+  private static readonly DEFAULT_CATEGORIES = [
+    'Plumbing',
+    'Electrical',
+    'Carpentry',
+    'Security Light',
+    'Cleaning',
+    'Other',
+  ];
+
+  private async ensureDefaultCategories(workspaceId: string) {
+    const count = await this.prisma.requestCategory.count({ where: { workspaceId } });
+    if (count > 0) return;
+    await this.prisma.requestCategory.createMany({
+      data: PropertyService.DEFAULT_CATEGORIES.map((name, i) => ({
+        workspaceId,
+        name,
+        sortOrder: i * 10,
+      })),
+      skipDuplicates: true,
+    });
+  }
+
+  async listRequestCategories(workspaceId: string) {
+    await this.assertPropertyWorkspace(workspaceId);
+    await this.ensureDefaultCategories(workspaceId);
+    return this.prisma.requestCategory.findMany({
+      where: { workspaceId },
+      orderBy: [{ active: 'desc' }, { sortOrder: 'asc' }, { name: 'asc' }],
+    });
+  }
+
+  async createRequestCategory(workspaceId: string, dto: { name: string; sortOrder?: number }) {
+    await this.assertPropertyWorkspace(workspaceId);
+    const name = String(dto.name || '').trim();
+    if (!name) throw new BadRequestException('Category name is required');
+    if (name.length > 80) throw new BadRequestException('Category name is too long');
+
+    const existing = await this.prisma.requestCategory.findUnique({
+      where: { workspaceId_name: { workspaceId, name } },
+    });
+    if (existing) {
+      if (!existing.active) {
+        return this.prisma.requestCategory.update({
+          where: { id: existing.id },
+          data: { active: true, sortOrder: dto.sortOrder ?? existing.sortOrder },
+        });
+      }
+      throw new BadRequestException('A category with that name already exists');
+    }
+
+    return this.prisma.requestCategory.create({
+      data: {
+        workspaceId,
+        name,
+        sortOrder: typeof dto.sortOrder === 'number' ? dto.sortOrder : 0,
+      },
+    });
+  }
+
+  async updateRequestCategory(
+    workspaceId: string,
+    categoryId: string,
+    dto: { name?: string; sortOrder?: number; active?: boolean },
+  ) {
+    await this.assertPropertyWorkspace(workspaceId);
+    const existing = await this.prisma.requestCategory.findFirst({
+      where: { id: categoryId, workspaceId },
+    });
+    if (!existing) throw new NotFoundException('Category not found');
+
+    const data: { name?: string; sortOrder?: number; active?: boolean } = {};
+    if (dto.name !== undefined) {
+      const name = String(dto.name || '').trim();
+      if (!name) throw new BadRequestException('Category name is required');
+      if (name.length > 80) throw new BadRequestException('Category name is too long');
+      if (name !== existing.name) {
+        const dup = await this.prisma.requestCategory.findUnique({
+          where: { workspaceId_name: { workspaceId, name } },
+        });
+        if (dup) throw new BadRequestException('A category with that name already exists');
+      }
+      data.name = name;
+    }
+    if (typeof dto.sortOrder === 'number') data.sortOrder = dto.sortOrder;
+    if (typeof dto.active === 'boolean') data.active = dto.active;
+
+    return this.prisma.requestCategory.update({ where: { id: categoryId }, data });
+  }
+
+  async deleteRequestCategory(workspaceId: string, categoryId: string) {
+    await this.assertPropertyWorkspace(workspaceId);
+    const existing = await this.prisma.requestCategory.findFirst({
+      where: { id: categoryId, workspaceId },
+    });
+    if (!existing) throw new NotFoundException('Category not found');
+    // Soft-delete via active=false to preserve history on existing requests.
+    return this.prisma.requestCategory.update({
+      where: { id: categoryId },
+      data: { active: false },
+    });
+  }
+
+  // ── Apartment Assets ────────────────────────────────────────────────────────
+
+  async listApartmentAssets(workspaceId: string) {
+    await this.assertPropertyWorkspace(workspaceId);
+    return this.prisma.apartmentAsset.findMany({
+      where: { workspaceId },
+      orderBy: [{ status: 'asc' }, { name: 'asc' }],
+    });
+  }
+
+  async createApartmentAsset(
+    workspaceId: string,
+    dto: {
+      name: string;
+      category?: string;
+      location?: string;
+      block?: string;
+      serialNumber?: string;
+      purchaseDate?: string;
+      warrantyEndDate?: string;
+      serviceIntervalDays?: number;
+      lastServiceAt?: string;
+      notes?: string;
+    },
+  ) {
+    await this.assertPropertyWorkspace(workspaceId);
+    const name = String(dto.name || '').trim();
+    if (!name) throw new BadRequestException('Asset name is required');
+
+    const lastServiceAt = dto.lastServiceAt ? new Date(dto.lastServiceAt) : null;
+    const interval = Number.isFinite(Number(dto.serviceIntervalDays)) ? Number(dto.serviceIntervalDays) : null;
+    const nextServiceAt =
+      lastServiceAt && interval
+        ? new Date(lastServiceAt.getTime() + interval * 24 * 60 * 60 * 1000)
+        : null;
+
+    return this.prisma.apartmentAsset.create({
+      data: {
+        workspaceId,
+        name,
+        category: dto.category?.trim() || null,
+        location: dto.location?.trim() || null,
+        block: dto.block?.trim() || null,
+        serialNumber: dto.serialNumber?.trim() || null,
+        purchaseDate: dto.purchaseDate ? new Date(dto.purchaseDate) : null,
+        warrantyEndDate: dto.warrantyEndDate ? new Date(dto.warrantyEndDate) : null,
+        serviceIntervalDays: interval,
+        lastServiceAt,
+        nextServiceAt,
+        notes: dto.notes?.trim() || null,
+      },
+    });
+  }
+
+  async updateApartmentAsset(workspaceId: string, assetId: string, dto: any) {
+    await this.assertPropertyWorkspace(workspaceId);
+    const existing = await this.prisma.apartmentAsset.findFirst({ where: { id: assetId, workspaceId } });
+    if (!existing) throw new NotFoundException('Asset not found');
+
+    const data: any = {};
+    if (dto.name !== undefined) data.name = String(dto.name || '').trim();
+    if (dto.category !== undefined) data.category = dto.category ? String(dto.category).trim() : null;
+    if (dto.location !== undefined) data.location = dto.location ? String(dto.location).trim() : null;
+    if (dto.block !== undefined) data.block = dto.block ? String(dto.block).trim() : null;
+    if (dto.serialNumber !== undefined) data.serialNumber = dto.serialNumber ? String(dto.serialNumber).trim() : null;
+    if (dto.purchaseDate !== undefined) data.purchaseDate = dto.purchaseDate ? new Date(dto.purchaseDate) : null;
+    if (dto.warrantyEndDate !== undefined) data.warrantyEndDate = dto.warrantyEndDate ? new Date(dto.warrantyEndDate) : null;
+    if (dto.notes !== undefined) data.notes = dto.notes ? String(dto.notes).trim() : null;
+    if (dto.status !== undefined) data.status = dto.status;
+    if (dto.serviceIntervalDays !== undefined) {
+      data.serviceIntervalDays = Number.isFinite(Number(dto.serviceIntervalDays))
+        ? Number(dto.serviceIntervalDays)
+        : null;
+    }
+    if (dto.lastServiceAt !== undefined) {
+      data.lastServiceAt = dto.lastServiceAt ? new Date(dto.lastServiceAt) : null;
+    }
+    // Recompute next service whenever interval or last-service change.
+    const interval =
+      data.serviceIntervalDays !== undefined ? data.serviceIntervalDays : existing.serviceIntervalDays;
+    const last =
+      data.lastServiceAt !== undefined ? data.lastServiceAt : existing.lastServiceAt;
+    if (interval && last) {
+      data.nextServiceAt = new Date(last.getTime() + interval * 24 * 60 * 60 * 1000);
+    }
+
+    return this.prisma.apartmentAsset.update({ where: { id: assetId }, data });
+  }
+
+  async deleteApartmentAsset(workspaceId: string, assetId: string) {
+    await this.assertPropertyWorkspace(workspaceId);
+    const existing = await this.prisma.apartmentAsset.findFirst({ where: { id: assetId, workspaceId } });
+    if (!existing) throw new NotFoundException('Asset not found');
+    await this.prisma.apartmentAsset.delete({ where: { id: assetId } });
+    return { ok: true };
+  }
+
+  async logApartmentAssetService(
+    workspaceId: string,
+    assetId: string,
+    dto: { servicedAt?: string; notes?: string },
+  ) {
+    await this.assertPropertyWorkspace(workspaceId);
+    const existing = await this.prisma.apartmentAsset.findFirst({ where: { id: assetId, workspaceId } });
+    if (!existing) throw new NotFoundException('Asset not found');
+
+    const lastServiceAt = dto.servicedAt ? new Date(dto.servicedAt) : new Date();
+    const interval = existing.serviceIntervalDays || null;
+    const nextServiceAt = interval
+      ? new Date(lastServiceAt.getTime() + interval * 24 * 60 * 60 * 1000)
+      : null;
+    const trimmedNote = String(dto.notes || '').trim();
+    const stamp = `[${lastServiceAt.toISOString()}] Service${trimmedNote ? `: ${trimmedNote}` : ''}`;
+    const notes = existing.notes ? `${existing.notes}\n${stamp}` : stamp;
+
+    return this.prisma.apartmentAsset.update({
+      where: { id: assetId },
+      data: { lastServiceAt, nextServiceAt, notes },
+    });
   }
 }

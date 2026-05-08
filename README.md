@@ -56,3 +56,29 @@ $ pnpm run build
 $ pnpm run test
 $ pnpm run test:e2e
 ```
+
+## Schema changes — local workflow
+
+`prisma migrate dev` is broken in this repo because two early migrations
+(`20260114121829_init` and `20260206102908_init_billing_plan_fields`) both
+`CREATE TYPE "TemplateType"`. Shadow-DB replay collides on the second one.
+Editing applied migrations would break the `_prisma_migrations` checksum on
+production, so we use this workflow instead:
+
+1. Edit `prisma/schema.prisma` with the changes you want.
+2. Sync the local dev DB:
+   ```bash
+   pnpm exec dotenv -e .env -- pnpm exec prisma db push --schema=prisma/schema.prisma
+   ```
+3. Hand-write a migration SQL file under
+   `prisma/migrations/<timestamp>_<name>/migration.sql`. Use `IF NOT EXISTS`
+   on every `CREATE TABLE` / `CREATE INDEX` and wrap `CREATE TYPE` in
+   `DO $$ ... EXCEPTION WHEN duplicate_object THEN null; END $$` so the
+   migration is safely re-runnable. See
+   `20260508220000_apartment_health_fixes/migration.sql` for the pattern.
+4. Production deploys via `pnpm run prisma:migrate` (which runs
+   `prisma migrate deploy`) and applies new files only.
+
+The shadow-DB issue can be permanently fixed later by squashing the two init
+migrations into one, but doing that requires resetting prod's
+`_prisma_migrations` table and is not safe without coordinated downtime.

@@ -36,8 +36,8 @@ export class TenantController {
 
   @WorkspacePermission('notices:view')
   @Get('notices')
-  notices(@Param('workspaceId') workspaceId: string) {
-    return this.tenant.listTenantNotices(workspaceId);
+  notices(@Param('workspaceId') workspaceId: string, @Req() req: any) {
+    return this.tenant.listTenantNotices(workspaceId, req.authUserId);
   }
 
   @WorkspacePermission('requests:view')
@@ -55,6 +55,27 @@ export class TenantController {
     @Body() dto: { body: string },
   ) {
     return this.tenant.addMyRequestMessage(workspaceId, req.authUserId, requestId, dto.body);
+  }
+
+  @WorkspacePermission('requests:create')
+  @Post('requests/:requestId/confirm')
+  confirmRequest(
+    @Param('workspaceId') workspaceId: string,
+    @Param('requestId') requestId: string,
+    @Req() req: any,
+  ) {
+    return this.tenant.confirmMyRequest(workspaceId, req.authUserId, requestId);
+  }
+
+  @WorkspacePermission('requests:create')
+  @Post('requests/:requestId/reopen')
+  reopenRequest(
+    @Param('workspaceId') workspaceId: string,
+    @Param('requestId') requestId: string,
+    @Req() req: any,
+    @Body() dto: { reason?: string },
+  ) {
+    return this.tenant.reopenMyRequest(workspaceId, req.authUserId, requestId, dto?.reason);
   }
 
   @WorkspacePermission('dashboard:view')

@@ -2,12 +2,16 @@ import { BadRequestException, Injectable, Logger, NotFoundException, Unauthorize
 import { PrismaService } from '../prisma/prisma.service';
 import { RequestPriority, RequestStatus, ResidentStatus, TemplateType } from '@prisma/client';
 import { randomUUID } from 'crypto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class TenantService {
   private readonly logger = new Logger(TenantService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   private async sendEmail(args: { to: string; subject: string; html: string }) {
     const apiKey = process.env.RESEND_API_KEY;
@@ -97,21 +101,44 @@ export class TenantService {
           take: 20,
         });
 
+    const residentBlock = (resident.unit as any)?.block ?? null;
+    const residentFloor = (resident.unit as any)?.floor ?? null;
+    const residentUnitId = resident.unitId ?? null;
+    const spatialFilter: any[] = [
+      { targetBlock: null, targetFloor: null, targetUnitId: null },
+      ...(residentUnitId ? [{ targetUnitId: residentUnitId }] : []),
+      ...(residentBlock
+        ? [{ targetBlock: residentBlock, targetFloor: null, targetUnitId: null }]
+        : []),
+      ...(residentBlock && residentFloor
+        ? [{ targetBlock: residentBlock, targetFloor: residentFloor, targetUnitId: null }]
+        : []),
+    ];
+
     const notices = ws.templateType === TemplateType.ESTATE
       ? await this.prisma.estateNotice.findMany({
           where: {
             workspaceId,
             audience: { in: ['ALL', 'RESIDENTS'] as any },
-            OR: [
-              { estateId: null },
-              ...(resident.unit && (resident.unit as any).estateId ? [{ estateId: (resident.unit as any).estateId }] : []),
+            AND: [
+              {
+                OR: [
+                  { estateId: null },
+                  ...(resident.unit && (resident.unit as any).estateId ? [{ estateId: (resident.unit as any).estateId }] : []),
+                ],
+              },
+              { OR: spatialFilter },
             ],
           },
           orderBy: { createdAt: 'desc' },
           take: 8,
         })
       : await this.prisma.apartmentNotice.findMany({
-          where: { workspaceId, audience: { in: ['ALL', 'RESIDENTS'] as any } },
+          where: {
+            workspaceId,
+            audience: { in: ['ALL', 'RESIDENTS'] as any },
+            OR: spatialFilter,
+          },
           orderBy: { createdAt: 'desc' },
           take: 8,
         });
@@ -192,7 +219,13 @@ export class TenantService {
     try {
       const workspace = await this.prisma.workspace.findUnique({
         where: { id: workspaceId },
-        include: { owner: { select: { email: true, fullName: true } } },
+        include: {
+          owner: { select: { id: true, email: true, fullName: true } },
+          members: {
+            where: { isActive: true, role: { in: ['OWNER_ADMIN', 'MANAGER'] } },
+            select: { userId: true, user: { select: { email: true } } },
+          },
+        },
       });
       const ownerEmail = workspace?.owner?.email?.toLowerCase();
       if (ownerEmail) {
@@ -202,6 +235,18 @@ export class TenantService {
           html: `<p>A tenant submitted a new request.</p><p><b>Resident:</b> ${resident.fullName}</p><p><b>Unit:</b> ${created.unit?.label || '-'}</p><p><b>Title:</b> ${created.title}</p>`,
         });
       }
+
+      // Push in-app notifications to admins/managers.
+      const ids = new Set<string>();
+      if (workspace?.owner?.id) ids.add(workspace.owner.id);
+      for (const m of workspace?.members || []) if (m.userId) ids.add(m.userId);
+      await this.notifications.pushMany(workspaceId, Array.from(ids), {
+        topic: 'REQUEST',
+        title: `New request: ${created.title}`,
+        body: `${resident.fullName} submitted a request for unit ${created.unit?.label || '-'}.`,
+        link: `/app/${workspaceId}/requests/${created.id}`,
+        data: { requestId: created.id, residentId: resident.id },
+      });
     } catch (e: any) {
       this.logger.warn(`Owner notification failed: ${e?.message || e}`);
     }
@@ -209,22 +254,53 @@ export class TenantService {
     return created;
   }
 
-  async listTenantNotices(workspaceId: string) {
+  async listTenantNotices(workspaceId: string, userId?: string) {
     const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { templateType: true } });
     if (!ws) throw new NotFoundException('Workspace not found');
+    if (ws.templateType !== TemplateType.ESTATE && ws.templateType !== TemplateType.APARTMENT) {
+      throw new BadRequestException('Tenant notices are enabled only for property templates');
+    }
+
+    let spatialFilter: any[] = [{ targetBlock: null, targetFloor: null, targetUnitId: null }];
+    if (userId) {
+      try {
+        const { resident } = await this.getResidentContext(workspaceId, userId);
+        const residentBlock = (resident.unit as any)?.block ?? null;
+        const residentFloor = (resident.unit as any)?.floor ?? null;
+        const residentUnitId = resident.unitId ?? null;
+        spatialFilter = [
+          { targetBlock: null, targetFloor: null, targetUnitId: null },
+          ...(residentUnitId ? [{ targetUnitId: residentUnitId }] : []),
+          ...(residentBlock
+            ? [{ targetBlock: residentBlock, targetFloor: null, targetUnitId: null }]
+            : []),
+          ...(residentBlock && residentFloor
+            ? [{ targetBlock: residentBlock, targetFloor: residentFloor, targetUnitId: null }]
+            : []),
+        ];
+      } catch {
+        // Non-resident actor (e.g., admin previewing tenant view) — fall back to global-only.
+      }
+    }
+
     if (ws.templateType === TemplateType.ESTATE) {
       return this.prisma.estateNotice.findMany({
-        where: { workspaceId, audience: { in: ['ALL', 'RESIDENTS'] as any } },
+        where: {
+          workspaceId,
+          audience: { in: ['ALL', 'RESIDENTS'] as any },
+          OR: spatialFilter,
+        },
         orderBy: { createdAt: 'desc' },
       });
     }
-    if (ws.templateType === TemplateType.APARTMENT) {
-      return this.prisma.apartmentNotice.findMany({
-        where: { workspaceId, audience: { in: ['ALL', 'RESIDENTS'] as any } },
-        orderBy: { createdAt: 'desc' },
-      });
-    }
-    throw new BadRequestException('Tenant notices are enabled only for property templates');
+    return this.prisma.apartmentNotice.findMany({
+      where: {
+        workspaceId,
+        audience: { in: ['ALL', 'RESIDENTS'] as any },
+        OR: spatialFilter,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
   }
 
   async listMyRequestMessages(workspaceId: string, userId: string, requestId: string) {
@@ -289,6 +365,66 @@ export class TenantService {
     }
 
     return msg;
+  }
+
+  async confirmMyRequest(workspaceId: string, userId: string, requestId: string) {
+    const { resident, ws } = await this.getResidentContext(workspaceId, userId);
+    const req = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateRequest.findFirst({ where: { id: requestId, workspaceId, residentId: resident.id } })
+      : await this.prisma.apartmentRequest.findFirst({ where: { id: requestId, workspaceId, residentId: resident.id } });
+    if (!req) throw new NotFoundException('Request not found');
+    if (req.status !== RequestStatus.RESOLVED) {
+      throw new BadRequestException('Only resolved requests can be confirmed');
+    }
+
+    return ws.templateType === TemplateType.ESTATE
+      ? this.prisma.estateRequest.update({ where: { id: requestId }, data: { status: RequestStatus.CLOSED } })
+      : this.prisma.apartmentRequest.update({ where: { id: requestId }, data: { status: RequestStatus.CLOSED } });
+  }
+
+  async reopenMyRequest(workspaceId: string, userId: string, requestId: string, reason?: string) {
+    const { resident, user, ws } = await this.getResidentContext(workspaceId, userId);
+    const req = ws.templateType === TemplateType.ESTATE
+      ? await this.prisma.estateRequest.findFirst({ where: { id: requestId, workspaceId, residentId: resident.id } })
+      : await this.prisma.apartmentRequest.findFirst({ where: { id: requestId, workspaceId, residentId: resident.id } });
+    if (!req) throw new NotFoundException('Request not found');
+    if (req.status !== RequestStatus.RESOLVED) {
+      throw new BadRequestException('Only resolved requests can be reopened');
+    }
+
+    const trimmedReason = String(reason || '').trim();
+    const messageBody = trimmedReason
+      ? `Reopened by resident: ${trimmedReason}`
+      : 'Reopened by resident.';
+
+    const [updated] = await this.prisma.$transaction([
+      ws.templateType === TemplateType.ESTATE
+        ? this.prisma.estateRequest.update({ where: { id: requestId }, data: { status: RequestStatus.PENDING } })
+        : this.prisma.apartmentRequest.update({ where: { id: requestId }, data: { status: RequestStatus.PENDING } }),
+      ws.templateType === TemplateType.ESTATE
+        ? this.prisma.estateRequestMessage.create({
+            data: {
+              id: randomUUID(),
+              workspaceId,
+              requestId,
+              senderUserId: user.id,
+              senderName: user.fullName || user.email || resident.fullName,
+              body: messageBody,
+            },
+          })
+        : this.prisma.apartmentRequestMessage.create({
+            data: {
+              id: randomUUID(),
+              workspaceId,
+              requestId,
+              senderUserId: user.id,
+              senderName: user.fullName || user.email || resident.fullName,
+              body: messageBody,
+            },
+          }),
+    ]);
+
+    return updated;
   }
 
   async getMyBalance(workspaceId: string, userId: string) {

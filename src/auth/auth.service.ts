@@ -494,8 +494,6 @@ export class AuthService {
   }
 
   private async assertManagerCapacity(workspaceId: string, rawPlanName: string, templateType: TemplateType) {
-    if (templateType !== TemplateType.OFFICE) return;
-
     const planName = resolvePlanName(rawPlanName || 'Starter');
     const limit = getEntitlements(planName, templateType).limits.managers;
     const used = await this.prisma.workspaceMember.count({
@@ -505,7 +503,7 @@ export class AuthService {
     if (used >= limit) {
       throw new ForbiddenException({
         code: 'LIMIT_EXCEEDED',
-        message: `This office workspace already has ${used}/${limit} manager seat(s) in use on ${planName}. Upgrade to add more managers.`,
+        message: `This workspace already has ${used}/${limit} manager seat(s) in use on ${planName}. Upgrade to add more managers.`,
         requiredPlan: planName === 'Starter' ? 'Growth' : 'TomaPrime',
         context: { limit: 'managers' },
       } as any);

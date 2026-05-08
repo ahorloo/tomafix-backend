@@ -24,8 +24,12 @@ export class OperationsController {
 
   @WorkspacePermission('notices:view')
   @Get('notices')
-  listNotices(@Param('workspaceId') workspaceId: string, @Query('estateId') estateId?: string) {
-    return this.operations.listNotices(workspaceId, estateId);
+  listNotices(
+    @Param('workspaceId') workspaceId: string,
+    @Query('estateId') estateId?: string,
+    @Query('search') search?: string,
+  ) {
+    return this.operations.listNotices(workspaceId, estateId, search);
   }
 
   @WorkspacePermission('notices:manage')
@@ -33,9 +37,28 @@ export class OperationsController {
   @Post('notices')
   createNotice(
     @Param('workspaceId') workspaceId: string,
-    @Body() dto: { title: string; body: string; audience?: NoticeAudience; estateId?: string },
+    @Body() dto: {
+      title: string;
+      body: string;
+      audience?: NoticeAudience;
+      estateId?: string;
+      targetBlock?: string | null;
+      targetFloor?: string | null;
+      targetUnitId?: string | null;
+      pinned?: boolean;
+      acknowledgeRequired?: boolean;
+    },
   ) {
     return this.operations.createNotice(workspaceId, dto);
+  }
+
+  @Post('notices/:noticeId/acknowledge')
+  acknowledgeNotice(
+    @Param('workspaceId') workspaceId: string,
+    @Param('noticeId') noticeId: string,
+    @Req() req: any,
+  ) {
+    return this.operations.acknowledgeNotice(workspaceId, noticeId, String(req?.authUserId || ''));
   }
 
   @Patch('notices/:noticeId/seen')
@@ -66,7 +89,17 @@ export class OperationsController {
   @Post('inspections')
   createInspection(
     @Param('workspaceId') workspaceId: string,
-    @Body() dto: { title: string; scope?: InspectionScope; unitId?: string; block?: string; floor?: string; dueDate: string; checklist?: string[]; estateId?: string },
+    @Body() dto: {
+      title: string;
+      scope?: InspectionScope;
+      inspectionType?: 'ROUTINE' | 'MOVE_IN' | 'MOVE_OUT';
+      unitId?: string;
+      block?: string;
+      floor?: string;
+      dueDate: string;
+      checklist?: string[];
+      estateId?: string;
+    },
   ) {
     return this.operations.createInspection(workspaceId, dto);
   }
@@ -80,5 +113,18 @@ export class OperationsController {
     @Body() dto: { status?: 'SCHEDULED' | 'IN_PROGRESS' | 'COMPLETED'; result?: string },
   ) {
     return this.operations.updateInspection(workspaceId, inspectionId, dto as any);
+  }
+
+  // Convert an inspection finding into a follow-up maintenance request.
+  // Body: { finding: string; priority?: RequestPriority; category?: string }
+  @WorkspacePermission('inspections:manage')
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF)
+  @Post('inspections/:inspectionId/convert-to-request')
+  convertInspectionToRequest(
+    @Param('workspaceId') workspaceId: string,
+    @Param('inspectionId') inspectionId: string,
+    @Body() dto: { finding: string; priority?: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT'; category?: string },
+  ) {
+    return this.operations.convertInspectionToRequest(workspaceId, inspectionId, dto);
   }
 }

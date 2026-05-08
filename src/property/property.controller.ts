@@ -335,4 +335,83 @@ export class PropertyController {
   ) {
     return this.property.getTenantBalance(workspaceId, residentId);
   }
+
+  // ── Request Categories ──────────────────────────────────────────────────────
+
+  @WorkspacePermission('requests:view')
+  @Get('request-categories')
+  listRequestCategories(@Param('workspaceId') workspaceId: string) {
+    return this.property.listRequestCategories(workspaceId);
+  }
+
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
+  @Post('request-categories')
+  createRequestCategory(
+    @Param('workspaceId') workspaceId: string,
+    @Body() dto: { name: string; sortOrder?: number },
+  ) {
+    return this.property.createRequestCategory(workspaceId, dto);
+  }
+
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
+  @Patch('request-categories/:categoryId')
+  updateRequestCategory(
+    @Param('workspaceId') workspaceId: string,
+    @Param('categoryId') categoryId: string,
+    @Body() dto: { name?: string; sortOrder?: number; active?: boolean },
+  ) {
+    return this.property.updateRequestCategory(workspaceId, categoryId, dto);
+  }
+
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
+  @Delete('request-categories/:categoryId')
+  deleteRequestCategory(
+    @Param('workspaceId') workspaceId: string,
+    @Param('categoryId') categoryId: string,
+  ) {
+    return this.property.deleteRequestCategory(workspaceId, categoryId);
+  }
+
+  // ── Apartment Assets ────────────────────────────────────────────────────────
+
+  @WorkspacePermission('requests:view')
+  @Get('apartment-assets')
+  listApartmentAssets(@Param('workspaceId') workspaceId: string) {
+    return this.property.listApartmentAssets(workspaceId);
+  }
+
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
+  @Post('apartment-assets')
+  createApartmentAsset(@Param('workspaceId') workspaceId: string, @Body() dto: any) {
+    return this.property.createApartmentAsset(workspaceId, dto);
+  }
+
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF, MemberRole.TECHNICIAN)
+  @Patch('apartment-assets/:assetId')
+  updateApartmentAsset(
+    @Param('workspaceId') workspaceId: string,
+    @Param('assetId') assetId: string,
+    @Body() dto: any,
+  ) {
+    return this.property.updateApartmentAsset(workspaceId, assetId, dto);
+  }
+
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER)
+  @Delete('apartment-assets/:assetId')
+  deleteApartmentAsset(
+    @Param('workspaceId') workspaceId: string,
+    @Param('assetId') assetId: string,
+  ) {
+    return this.property.deleteApartmentAsset(workspaceId, assetId);
+  }
+
+  @WorkspaceRoles(MemberRole.OWNER_ADMIN, MemberRole.MANAGER, MemberRole.STAFF, MemberRole.TECHNICIAN)
+  @Post('apartment-assets/:assetId/log-service')
+  logApartmentAssetService(
+    @Param('workspaceId') workspaceId: string,
+    @Param('assetId') assetId: string,
+    @Body() dto: { servicedAt?: string; notes?: string },
+  ) {
+    return this.property.logApartmentAssetService(workspaceId, assetId, dto);
+  }
 }

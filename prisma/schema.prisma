@@ -97,6 +97,7 @@ enum ResidentRole {
 enum WorkOrderStatus {
   OPEN
   IN_PROGRESS
+  WAITING
   COMPLETED
   CANCELLED
 }
@@ -178,6 +179,12 @@ enum InspectionScope {
   UNIT
   BLOCK
   FLOOR
+}
+
+enum ApartmentAssetStatus {
+  ACTIVE
+  UNDER_MAINTENANCE
+  RETIRED
 }
 
 enum EstateChargeStatus {
@@ -367,6 +374,12 @@ model Workspace {
   estateEmergencyAlerts      EstateEmergencyAlert[]
   estateReminderLogs         EstateReminderLog[]
 
+  // Workspace-scoped configuration
+  requestCategories          RequestCategory[]
+  notificationDeadLetters    NotificationDeadLetter[]
+  notifications              Notification[]
+  apartmentAssets            ApartmentAsset[]
+
   // Integrations
   slackWebhookUrl    String?
   outboundWebhookUrl String?
@@ -398,6 +411,7 @@ model User {
   staffBlockAssignments StaffBlockAssignment[]
   passkeys              PasskeyCredential[]
   trustedDevices        TrustedDevice[]
+  notifications         Notification[]
 }
 
 model WorkspaceMember {
@@ -438,6 +452,7 @@ model Invite {
   email       String?
   phone       String?
   role        MemberRole
+  unitId      String?
   tokenHash   String     @unique
   expiresAt   DateTime
   acceptedAt  DateTime?
@@ -620,32 +635,46 @@ model Estate {
 }
 
 model ApartmentNotice {
-  id          String         @id @default(cuid())
-  workspaceId String
-  title       String
-  body        String
-  audience    NoticeAudience @default(ALL)
-  seenBy      Json?
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  id                  String         @id @default(cuid())
+  workspaceId         String
+  title               String
+  body                String
+  audience            NoticeAudience @default(ALL)
+  targetBlock         String?
+  targetFloor         String?
+  targetUnitId        String?
+  pinned              Boolean        @default(false)
+  acknowledgeRequired Boolean        @default(false)
+  seenBy              Json?
+  acknowledgements    Json?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId])
   @@index([createdAt])
   @@index([workspaceId, audience, createdAt])
+  @@index([workspaceId, targetBlock, targetFloor])
+  @@index([workspaceId, targetUnitId])
 }
 
 model EstateNotice {
-  id          String         @id @default(cuid())
-  workspaceId String
-  estateId    String?
-  title       String
-  body        String
-  audience    NoticeAudience @default(ALL)
-  seenBy      Json?
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  id                  String         @id @default(cuid())
+  workspaceId         String
+  estateId            String?
+  title               String
+  body                String
+  audience            NoticeAudience @default(ALL)
+  targetBlock         String?
+  targetFloor         String?
+  targetUnitId        String?
+  pinned              Boolean        @default(false)
+  acknowledgeRequired Boolean        @default(false)
+  seenBy              Json?
+  acknowledgements    Json?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   estate    Estate?   @relation(fields: [estateId], references: [id], onDelete: SetNull)
@@ -654,6 +683,8 @@ model EstateNotice {
   @@index([estateId])
   @@index([workspaceId, estateId, audience, createdAt])
   @@index([createdAt])
+  @@index([workspaceId, targetBlock, targetFloor])
+  @@index([workspaceId, targetUnitId])
 }
 
 model OfficeNotice {
@@ -674,19 +705,20 @@ model OfficeNotice {
 }
 
 model ApartmentInspection {
-  id          String           @id @default(cuid())
-  workspaceId String
-  unitId      String?
-  scope       InspectionScope  @default(UNIT)
-  block       String?
-  floor       String?
-  title       String
-  dueDate     DateTime
-  checklist   Json?
-  status      InspectionStatus @default(SCHEDULED)
-  result      String?
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  id             String           @id @default(cuid())
+  workspaceId    String
+  unitId         String?
+  scope          InspectionScope  @default(UNIT)
+  inspectionType String?          @default("ROUTINE") // ROUTINE | MOVE_IN | MOVE_OUT
+  block          String?
+  floor          String?
+  title          String
+  dueDate        DateTime
+  checklist      Json?
+  status         InspectionStatus @default(SCHEDULED)
+  result         String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
 
   workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   unit      ApartmentUnit? @relation(fields: [unitId], references: [id], onDelete: SetNull)
@@ -810,6 +842,7 @@ model ApartmentRequest {
   residentId  String?
   title       String
   description String?
+  category    String?
   photoUrl    String?
   priority    RequestPriority @default(NORMAL)
   status      RequestStatus   @default(PENDING)
@@ -1470,6 +1503,32 @@ model ApartmentVendor {
   @@index([workspaceId, category])
 }
 
+// Apartment-side fixed asset register (generators, pumps, water tanks, etc.)
+model ApartmentAsset {
+  id                String               @id @default(cuid())
+  workspaceId       String
+  name              String
+  category          String?              // e.g. Generator, Pump, Water Tank, Lift, CCTV
+  location          String?              // free-text location label
+  block             String?
+  serialNumber      String?
+  purchaseDate      DateTime?
+  warrantyEndDate   DateTime?
+  status            ApartmentAssetStatus @default(ACTIVE)
+  notes             String?
+  serviceIntervalDays Int?
+  lastServiceAt     DateTime?
+  nextServiceAt     DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, nextServiceAt])
+}
+
 model EstateVendor {
   id          String   @id @default(cuid())
   workspaceId String
@@ -1493,27 +1552,29 @@ model EstateVendor {
 }
 
 model ApartmentWorkOrder {
-  id               String          @id @default(cuid())
-  workspaceId      String
-  unitId           String?
-  unitLabel        String?
-  residentId       String?
-  vendorId         String?
-  assignedToUserId String?
-  assignedToName   String?
-  title            String
-  description      String?
-  category         String?
-  priority         RequestPriority @default(NORMAL)
-  status           WorkOrderStatus @default(OPEN)
-  estimatedCost    Float?
-  actualCost       Float?
-  slaDeadline      DateTime?
-  completedAt      DateTime?
-  completionNote   String?
-  proofPhotoUrl    String?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  id                   String          @id @default(cuid())
+  workspaceId          String
+  unitId               String?
+  unitLabel            String?
+  residentId           String?
+  vendorId             String?
+  assignedToUserId     String?
+  assignedToName       String?
+  title                String
+  description          String?
+  category             String?
+  priority             RequestPriority @default(NORMAL)
+  status               WorkOrderStatus @default(OPEN)
+  waitingReason        String?
+  estimatedCost        Float?
+  actualCost           Float?
+  slaDeadline          DateTime?
+  slaBreachAlertedAt   DateTime?
+  completedAt          DateTime?
+  completionNote       String?
+  proofPhotoUrl        String?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
 
   workspace Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   vendor    ApartmentVendor?        @relation(fields: [vendorId], references: [id], onDelete: SetNull)
@@ -1524,6 +1585,7 @@ model ApartmentWorkOrder {
   @@index([workspaceId, unitId])
   @@index([workspaceId, vendorId])
   @@index([workspaceId, assignedToUserId])
+  @@index([slaDeadline, slaBreachAlertedAt])
 }
 
 model ApartmentWorkOrderMessage {
@@ -1544,28 +1606,30 @@ model ApartmentWorkOrderMessage {
 }
 
 model EstateWorkOrder {
-  id               String          @id @default(cuid())
-  workspaceId      String
-  estateId         String?
-  unitId           String?
-  unitLabel        String?
-  residentId       String?
-  vendorId         String?
-  assignedToUserId String?
-  assignedToName   String?
-  title            String
-  description      String?
-  category         String?
-  priority         RequestPriority @default(NORMAL)
-  status           WorkOrderStatus @default(OPEN)
-  estimatedCost    Float?
-  actualCost       Float?
-  slaDeadline      DateTime?
-  completedAt      DateTime?
-  completionNote   String?
-  proofPhotoUrl    String?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  id                   String          @id @default(cuid())
+  workspaceId          String
+  estateId             String?
+  unitId               String?
+  unitLabel            String?
+  residentId           String?
+  vendorId             String?
+  assignedToUserId     String?
+  assignedToName       String?
+  title                String
+  description          String?
+  category             String?
+  priority             RequestPriority @default(NORMAL)
+  status               WorkOrderStatus @default(OPEN)
+  waitingReason        String?
+  estimatedCost        Float?
+  actualCost           Float?
+  slaDeadline          DateTime?
+  slaBreachAlertedAt   DateTime?
+  completedAt          DateTime?
+  completionNote       String?
+  proofPhotoUrl        String?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
 
   workspace Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   estate    Estate?              @relation(fields: [estateId], references: [id], onDelete: SetNull)
@@ -1578,6 +1642,7 @@ model EstateWorkOrder {
   @@index([workspaceId, unitId])
   @@index([workspaceId, vendorId])
   @@index([workspaceId, assignedToUserId])
+  @@index([slaDeadline, slaBreachAlertedAt])
 }
 
 model EstateWorkOrderMessage {
@@ -2219,4 +2284,78 @@ model PasskeyCredential {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+// ── Workspace-scoped request categories (replaces hardcoded category lists) ──
+model RequestCategory {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  sortOrder   Int      @default(0)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId, active, sortOrder])
+}
+
+// ── Notification dead-letter queue (failed sends, retried by scheduler) ──────
+enum NotificationStatus {
+  PENDING
+  RETRYING
+  FAILED
+  SENT
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+}
+
+model NotificationDeadLetter {
+  id            String              @id @default(cuid())
+  workspaceId   String?
+  channel       NotificationChannel
+  recipient     String
+  subject       String?
+  payload       Json
+  status        NotificationStatus  @default(PENDING)
+  attempts      Int                 @default(0)
+  lastError     String?
+  nextAttemptAt DateTime            @default(now())
+  sentAt        DateTime?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+
+  @@index([status, nextAttemptAt])
+  @@index([workspaceId, status])
+}
+
+// In-app notification feed (per user, scoped to a workspace).
+// Drives the bell icon and unread-count badges in the frontend.
+model Notification {
+  id          String    @id @default(cuid())
+  workspaceId String
+  userId      String
+  // Topic so the UI can icon/group: REQUEST | NOTICE | INSPECTION | ASSIGNMENT | SLA | INVITE | SYSTEM
+  topic       String
+  title       String
+  body        String?
+  // Optional deep-link path (e.g. /app/<wsid>/requests/<id>)
+  link        String?
+  data        Json?
+  readAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, userId, readAt, createdAt])
+  @@index([userId, readAt, createdAt])
 }

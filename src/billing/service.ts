@@ -2,7 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { TemplateType } from '@prisma/client';
 import { cacheGet, cacheSet, cacheBust, cacheStats } from './cache';
-import { getEntitlements, assertPlanExists, PLAN_MAP } from './planConfig';
+import { getEntitlements, assertPlanExists, PLAN_MAP, applyWorkspaceOverrides } from './planConfig';
 import { EntitlementsPayload, PlanName, mapWorkspaceStatusToBillingStatus } from '../types/billing';
 
 const ENTITLEMENTS_TTL_MS = 3 * 60 * 1000; // 3 minutes
@@ -22,7 +22,11 @@ export class BillingDomainService {
     const planName = (ws as any).planName || 'Starter';
     assertPlanExists(planName);
 
-    const [propertiesUsed, unitsUsed, managersUsed] = await Promise.all([
+    const monthStart = new Date();
+    monthStart.setUTCDate(1);
+    monthStart.setUTCHours(0, 0, 0, 0);
+
+    const [propertiesUsed, unitsUsed, managersUsed, residentsUsed, requestsThisMonthUsed] = await Promise.all([
       ws.templateType === TemplateType.ESTATE
         ? this.prisma.estate.count({ where: { workspaceId } })
         : ws.templateType === TemplateType.OFFICE
@@ -36,15 +40,41 @@ export class BillingDomainService {
       this.prisma.workspaceMember.count({
         where: { workspaceId, isActive: true, role: 'MANAGER' as any },
       }),
+      ws.templateType === TemplateType.ESTATE
+        ? this.prisma.estateResident.count({ where: { workspaceId } })
+        : ws.templateType === TemplateType.APARTMENT
+          ? this.prisma.apartmentResident.count({ where: { workspaceId } })
+          : Promise.resolve(0),
+      ws.templateType === TemplateType.ESTATE
+        ? this.prisma.estateRequest.count({ where: { workspaceId, createdAt: { gte: monthStart } } })
+        : ws.templateType === TemplateType.APARTMENT
+          ? this.prisma.apartmentRequest.count({ where: { workspaceId, createdAt: { gte: monthStart } } })
+          : ws.templateType === TemplateType.OFFICE
+            ? this.prisma.officeRequest.count({ where: { workspaceId, createdAt: { gte: monthStart } } })
+            : Promise.resolve(0),
     ]);
 
-    const plan = getEntitlements(planName, ws.templateType);
+    const baseEntitlements = getEntitlements(planName, ws.templateType);
+    const overrides = ((ws as any).permissionPolicy as any)?.entitlementOverrides ?? null;
+    const plan = applyWorkspaceOverrides(baseEntitlements, overrides);
+
+    // Surface "over-cap" resources so the UI can show what to clean up after a
+    // downgrade. Cap is hard at create-time (guards.ts blocks new creates) but
+    // existing rows are grandfathered.
+    const overCap = {
+      properties: propertiesUsed > plan.limits.properties,
+      units: unitsUsed > plan.limits.units,
+      managers: managersUsed > plan.limits.managers,
+      residents: residentsUsed > plan.limits.residents,
+      requestsPerMonth: requestsThisMonthUsed > plan.limits.requestsPerMonth,
+    };
 
     const payload: EntitlementsPayload = {
       planName,
       limits: plan.limits,
-      usage: { propertiesUsed, unitsUsed, managersUsed },
+      usage: { propertiesUsed, unitsUsed, managersUsed, residentsUsed, requestsThisMonthUsed },
       features: plan.features,
+      overCap,
       billingStatus: (ws as any).billingStatus || mapWorkspaceStatusToBillingStatus(ws.status),
       nextRenewal: (ws as any).nextRenewal ?? null,
       currency: plan.currency,

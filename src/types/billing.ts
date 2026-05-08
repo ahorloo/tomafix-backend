@@ -25,7 +25,7 @@ export type FeatureKey =
   | 'prioritySupport'
   | 'earlyAccess';
 
-export type LimitKey = 'properties' | 'units' | 'managers';
+export type LimitKey = 'properties' | 'units' | 'managers' | 'residents' | 'requestsPerMonth';
 
 export type FeatureFlags = Record<FeatureKey, boolean>;
 
@@ -33,12 +33,16 @@ export interface EntitlementLimits {
   properties: number;
   units: number;
   managers: number;
+  residents: number;
+  requestsPerMonth: number;
 }
 
 export interface EntitlementUsage {
   propertiesUsed: number;
   unitsUsed: number;
   managersUsed: number;
+  residentsUsed: number;
+  requestsThisMonthUsed: number;
 }
 
 export interface EntitlementsPayload {
@@ -51,6 +55,16 @@ export interface EntitlementsPayload {
   currency: string;
   amount: number; // pesewas
   notes?: string[];
+  // Per-resource flags that flip true when a workspace is over its plan cap
+  // after a downgrade. Existing rows are grandfathered; new creates are blocked
+  // by the entitlements guard.
+  overCap?: {
+    properties: boolean;
+    units: boolean;
+    managers: boolean;
+    residents: boolean;
+    requestsPerMonth: boolean;
+  };
 }
 
 export type GatedErrorPayload = {

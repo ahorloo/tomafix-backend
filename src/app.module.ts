@@ -21,6 +21,8 @@ import { VisitorsModule } from './visitors/visitors.module';
 import { PropertyModule } from './property/property.module';
 import { SmsModule } from './sms/sms.module';
 import { EstateOpsModule } from './estate-ops/estate-ops.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { AiModule } from './ai/ai.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -48,6 +50,8 @@ import { AppService } from './app.service';
     PropertyModule,
     SmsModule,
     EstateOpsModule,
+    NotificationsModule,
+    AiModule,
   ],
   controllers: [AppController],
   providers: [
