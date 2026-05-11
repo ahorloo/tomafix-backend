@@ -61,17 +61,20 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
     try {
       const { PLAN_MAP } = require('./planConfig') as typeof import('./planConfig');
       const known = new Set(Object.keys(PLAN_MAP));
-      const rows = await this.prisma.workspace.findMany({
-        select: { id: true, name: true, planName: true },
+      // Aggregate to distinct planName values + counts. Avoids loading every
+      // workspace row into memory (matters at boot on small Render dynos).
+      const grouped = await this.prisma.workspace.groupBy({
+        by: ['planName'],
+        _count: { _all: true },
       });
-      const drift = rows.filter((r) => !known.has(String(r.planName || 'Starter')));
+      const drift = grouped.filter((g) => !known.has(String(g.planName || 'Starter')));
       if (drift.length) {
-        this.logger.warn(
-          `[Plan audit] ${drift.length} workspace(s) have unknown plan names: ${drift
-            .slice(0, 5)
-            .map((r) => `${r.id}=${r.planName}`)
-            .join(', ')}${drift.length > 5 ? '…' : ''}`,
-        );
+        const summary = drift
+          .slice(0, 5)
+          .map((g) => `${g.planName || '(null)'}=${g._count?._all ?? 0}`)
+          .join(', ');
+        const total = drift.reduce((sum, g) => sum + (g._count?._all ?? 0), 0);
+        this.logger.warn(`[Plan audit] ${total} workspace(s) on unknown plans: ${summary}`);
       }
     } catch (e: any) {
       this.logger.warn(`[Plan audit] failed: ${e?.message || e}`);
